@@ -29,6 +29,7 @@ import glob
 import time
 import argparse
 from filterpy.kalman import KalmanFilter
+import cv2
 
 np.random.seed(0)
 
@@ -151,7 +152,7 @@ class KalmanBoxTracker(object):
     return convert_x_to_bbox(self.kf.x)
 
 
-def associate_detections_to_trackers(detections,trackers,iou_threshold = 0.3):
+def associate_detections_to_trackers(detections, trackers, iou_threshold = 0.3):
   """
   Assigns detections to tracked object (both represented as bounding boxes)
 
@@ -229,7 +230,7 @@ class Sort(object):
     trks = np.ma.compress_rows(np.ma.masked_invalid(trks))
     for t in reversed(to_del):
       self.trackers.pop(t)
-    matched, unmatched_dets, unmatched_trks = associate_detections_to_trackers(dets,trks, self.iou_threshold)
+    matched, unmatched_dets, unmatched_trks = associate_detections_to_trackers(dets, trks, self.iou_threshold)
 
     # update matched trackers with assigned detections
     for m in matched:
@@ -257,14 +258,15 @@ def parse_args():
     parser = argparse.ArgumentParser(description='SORT demo')
     parser.add_argument('--display', dest='display', help='Display online tracker output (slow) [False]',action='store_true')
     parser.add_argument("--seq_path", help="Path to detections.", type=str, default='data')
-    parser.add_argument("--phase", help="Subdirectory in seq_path.", type=str, default='train')
+    parser.add_argument("--phase", help="Subdirectory in seq_path.", type=str, default='neweval')
     parser.add_argument("--max_age", 
                         help="Maximum number of frames to keep alive a track without associated detections.", 
                         type=int, default=1)
     parser.add_argument("--min_hits", 
                         help="Minimum number of associated detections before track is initialised.", 
-                        type=int, default=3)
+                        type=int, default=2)
     parser.add_argument("--iou_threshold", help="Minimum IOU for match.", type=float, default=0.3)
+    parser.add_argument("--output_dir", help="Path to the output dir", type=str, default="output")
     args = parser.parse_args()
     return args
 
@@ -276,6 +278,7 @@ if __name__ == '__main__':
   total_time = 0.0
   total_frames = 0
   colours = np.random.rand(32, 3) #used only for display
+  output_dir = os.path.join(args.output_dir, phase, 'data')
   if(display):
     if not os.path.exists('mot_benchmark'):
       print('\n\tERROR: mot_benchmark link not found!\n\n    Create a symbolic link to the MOT benchmark\n    (https://motchallenge.net/data/2D_MOT_2015/#download). E.g.:\n\n    $ ln -s /path/to/MOT2015_challenge/2DMOT2015 mot_benchmark\n\n')
@@ -284,8 +287,8 @@ if __name__ == '__main__':
     fig = plt.figure()
     ax1 = fig.add_subplot(111, aspect='equal')
 
-  if not os.path.exists('output'):
-    os.makedirs('output')
+  if not os.path.exists(output_dir):
+    os.makedirs(output_dir)
   pattern = os.path.join(args.seq_path, phase, '*', 'det', 'det.txt')
   for seq_dets_fn in glob.glob(pattern):
     mot_tracker = Sort(max_age=args.max_age, 
@@ -294,7 +297,7 @@ if __name__ == '__main__':
     seq_dets = np.loadtxt(seq_dets_fn, delimiter=',')
     seq = seq_dets_fn[pattern.find('*'):].split(os.path.sep)[0]
     
-    with open(os.path.join('output', '%s.txt'%(seq)),'w') as out_file:
+    with open(os.path.join(output_dir, '%s.txt'%(seq)),'w') as out_file:
       print("Processing %s."%(seq))
       for frame in range(int(seq_dets[:,0].max())):
         frame += 1 #detection and frame numbers begin at 1
@@ -302,7 +305,7 @@ if __name__ == '__main__':
         dets[:, 2:4] += dets[:, 0:2] #convert to [x1,y1,w,h] to [x1,y1,x2,y2]
         total_frames += 1
 
-        if(display):
+        if(display and frame < 20):
           fn = os.path.join('mot_benchmark', phase, seq, 'img1', '%06d.jpg'%(frame))
           im =io.imread(fn)
           ax1.imshow(im)
@@ -315,14 +318,15 @@ if __name__ == '__main__':
 
         for d in trackers:
           print('%d,%d,%.2f,%.2f,%.2f,%.2f,1,-1,-1,-1'%(frame,d[4],d[0],d[1],d[2]-d[0],d[3]-d[1]),file=out_file)
-          if(display):
+          if(display and frame < 20):
             d = d.astype(np.int32)
             ax1.add_patch(patches.Rectangle((d[0],d[1]),d[2]-d[0],d[3]-d[1],fill=False,lw=3,ec=colours[d[4]%32,:]))
 
-        if(display):
+        if(display and frame < 20):
           fig.canvas.flush_events()
           plt.draw()
           ax1.cla()
+        
 
   print("Total Tracking took: %.3f seconds for %d frames or %.1f FPS" % (total_time, total_frames, total_frames / total_time))
 

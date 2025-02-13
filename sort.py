@@ -24,12 +24,15 @@ matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from skimage import io
+from os.path import join
 
 import glob
 import time
 import argparse
 from filterpy.kalman import KalmanFilter
 import cv2
+
+from utils import draw_bboxes, scale_coords
 
 np.random.seed(0)
 
@@ -152,49 +155,70 @@ class KalmanBoxTracker(object):
     return convert_x_to_bbox(self.kf.x)
 
 
-def associate_detections_to_trackers(detections, trackers, iou_threshold = 0.3):
-  """
-  Assigns detections to tracked object (both represented as bounding boxes)
+def associate_detections_to_trackers(detections, trackers, iou_threshold = 0.3, features=None, debug_img=None):
+    """
+    Assigns detections to tracked object (both represented as bounding boxes)
 
-  Returns 3 lists of matches, unmatched_detections and unmatched_trackers
-  """
-  if(len(trackers)==0):
-    return np.empty((0,2),dtype=int), np.arange(len(detections)), np.empty((0,5),dtype=int)
+    Returns 3 lists of matches, unmatched_detections and unmatched_trackers
+    """
+    if(len(trackers)==0):
+        return np.empty((0,2),dtype=int), np.arange(len(detections)), np.empty((0,5),dtype=int)
 
-  iou_matrix = iou_batch(detections, trackers)
+    iou_matrix = iou_batch(detections, trackers)
 
-  if min(iou_matrix.shape) > 0:
-    a = (iou_matrix > iou_threshold).astype(np.int32)
-    if a.sum(1).max() == 1 and a.sum(0).max() == 1:
-        matched_indices = np.stack(np.where(a), axis=1)
+    # print(features.shape)
+    if features is not None and debug_img is not None:
+        
+        for i, ch in enumerate(features[0]):
+            # print(ch)
+            # print(len(np.unique(ch)), np.min(ch), np.max(ch))
+            # print(i)
+            test = ((ch - np.min(ch)) / (np.max(ch) - np.min(ch))) * 255
+            scaled_dets = scale_coords(debug_img.shape, detections, ch.shape)
+            # print(scaled_dets)
+            test =  np.stack([test] * 3, axis=2)
+            draw_bboxes(test, scaled_dets)
+            # test_resized = cv2.resize(test, (640, 512))
+            # print(test.shape)
+            cv2.imshow(str(i), test)
+            # print(ch.shape, np.unique(ch))
+
+        # print('img:', debug_img.shape)
+        draw_bboxes(debug_img, detections)
+        cv2.imshow('debug', debug_img)
+
+    if min(iou_matrix.shape) > 0:
+        a = (iou_matrix > iou_threshold).astype(np.int32)
+        if a.sum(1).max() == 1 and a.sum(0).max() == 1:
+            matched_indices = np.stack(np.where(a), axis=1)
+        else:
+            matched_indices = linear_assignment(-iou_matrix)
     else:
-      matched_indices = linear_assignment(-iou_matrix)
-  else:
-    matched_indices = np.empty(shape=(0,2))
+        matched_indices = np.empty(shape=(0,2))
 
-  unmatched_detections = []
-  for d, det in enumerate(detections):
-    if(d not in matched_indices[:,0]):
-      unmatched_detections.append(d)
-  unmatched_trackers = []
-  for t, trk in enumerate(trackers):
-    if(t not in matched_indices[:,1]):
-      unmatched_trackers.append(t)
+    unmatched_detections = []
+    for d, det in enumerate(detections):
+        if(d not in matched_indices[:,0]):
+            unmatched_detections.append(d)
+    unmatched_trackers = []
+    for t, trk in enumerate(trackers):
+        if(t not in matched_indices[:,1]):
+            unmatched_trackers.append(t)
 
-  #filter out matched with low IOU
-  matches = []
-  for m in matched_indices:
-    if(iou_matrix[m[0], m[1]]<iou_threshold):
-      unmatched_detections.append(m[0])
-      unmatched_trackers.append(m[1])
+    #filter out matched with low IOU
+    matches = []
+    for m in matched_indices:
+        if(iou_matrix[m[0], m[1]]<iou_threshold):
+            unmatched_detections.append(m[0])
+            unmatched_trackers.append(m[1])
+        else:
+            matches.append(m.reshape(1,2))
+    if(len(matches)==0):
+        matches = np.empty((0,2),dtype=int)
     else:
-      matches.append(m.reshape(1,2))
-  if(len(matches)==0):
-    matches = np.empty((0,2),dtype=int)
-  else:
-    matches = np.concatenate(matches,axis=0)
+        matches = np.concatenate(matches,axis=0)
 
-  return matches, np.array(unmatched_detections), np.array(unmatched_trackers)
+    return matches, np.array(unmatched_detections), np.array(unmatched_trackers)
 
 
 class Sort(object):
@@ -208,7 +232,7 @@ class Sort(object):
     self.trackers = []
     self.frame_count = 0
 
-  def update(self, dets=np.empty((0, 5))):
+  def update(self, dets=np.empty((0, 5)), features=None, debug_img=None):
     """
     Params:
       dets - a numpy array of detections in the format [[x1,y1,x2,y2,score],[x1,y1,x2,y2,score],...]
@@ -230,7 +254,7 @@ class Sort(object):
     trks = np.ma.compress_rows(np.ma.masked_invalid(trks))
     for t in reversed(to_del):
       self.trackers.pop(t)
-    matched, unmatched_dets, unmatched_trks = associate_detections_to_trackers(dets, trks, self.iou_threshold)
+    matched, unmatched_dets, unmatched_trks = associate_detections_to_trackers(dets, trks, self.iou_threshold, features=features, debug_img=debug_img)
 
     # update matched trackers with assigned detections
     for m in matched:
@@ -267,68 +291,68 @@ def parse_args():
                         type=int, default=2)
     parser.add_argument("--iou_threshold", help="Minimum IOU for match.", type=float, default=0.3)
     parser.add_argument("--output_dir", help="Path to the output dir", type=str, default="output")
+    parser.add_argument("--debug_images", help="Path to directory with sequences in mot format for visualization", type=str, default="")
+    parser.add_argument("--use_conv_features", help="Index of detector features to use", type=int, default=None)
     args = parser.parse_args()
     return args
 
 if __name__ == '__main__':
-  # all train
-  args = parse_args()
-  display = args.display
-  phase = args.phase
-  total_time = 0.0
-  total_frames = 0
-  colours = np.random.rand(32, 3) #used only for display
-  output_dir = os.path.join(args.output_dir, phase, 'data')
-  if(display):
-    if not os.path.exists('mot_benchmark'):
-      print('\n\tERROR: mot_benchmark link not found!\n\n    Create a symbolic link to the MOT benchmark\n    (https://motchallenge.net/data/2D_MOT_2015/#download). E.g.:\n\n    $ ln -s /path/to/MOT2015_challenge/2DMOT2015 mot_benchmark\n\n')
-      exit()
-    plt.ion()
-    fig = plt.figure()
-    ax1 = fig.add_subplot(111, aspect='equal')
+    # all train
+    args = parse_args()
+    display = args.display
+    phase = args.phase
+    total_time = 0.0
+    total_frames = 0
+    colours = np.random.rand(32, 3) #used only for display
+    output_dir = join(args.output_dir, phase, 'data')
+    key = None
 
-  if not os.path.exists(output_dir):
-    os.makedirs(output_dir)
-  pattern = os.path.join(args.seq_path, phase, '*', 'det', 'det.txt')
-  for seq_dets_fn in glob.glob(pattern):
-    mot_tracker = Sort(max_age=args.max_age, 
-                       min_hits=args.min_hits,
-                       iou_threshold=args.iou_threshold) #create instance of the SORT tracker
-    seq_dets = np.loadtxt(seq_dets_fn, delimiter=',')
-    seq = seq_dets_fn[pattern.find('*'):].split(os.path.sep)[0]
-    
-    with open(os.path.join(output_dir, '%s.txt'%(seq)),'w') as out_file:
-      print("Processing %s."%(seq))
-      for frame in range(int(seq_dets[:,0].max())):
-        frame += 1 #detection and frame numbers begin at 1
-        dets = seq_dets[seq_dets[:, 0]==frame, 2:7]
-        dets[:, 2:4] += dets[:, 0:2] #convert to [x1,y1,w,h] to [x1,y1,x2,y2]
-        total_frames += 1
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    seqnames = os.listdir(join(args.seq_path, phase))
 
-        if(display and frame < 20):
-          fn = os.path.join('mot_benchmark', phase, seq, 'img1', '%06d.jpg'%(frame))
-          im =io.imread(fn)
-          ax1.imshow(im)
-          plt.title(seq + ' Tracked Targets')
+    for seq in seqnames:
+        mot_tracker = Sort(max_age=args.max_age, 
+                            min_hits=args.min_hits,
+                            iou_threshold=args.iou_threshold) #create instance of the SORT tracker
+        seq_dets = np.loadtxt(join(args.seq_path, phase, seq, 'det', 'det.txt'), delimiter=',')
+        seq_features_dir = join(args.seq_path, phase, seq, 'features')
 
-        start_time = time.time()
-        trackers = mot_tracker.update(dets)
-        cycle_time = time.time() - start_time
-        total_time += cycle_time
+        with open(os.path.join(output_dir, '%s.txt'%(seq)),'w') as out_file:
+            print("Processing %s."%(seq))
+            for frame in range(int(seq_dets[:,0].max())):
 
-        for d in trackers:
-          print('%d,%d,%.2f,%.2f,%.2f,%.2f,1,-1,-1,-1'%(frame,d[4],d[0],d[1],d[2]-d[0],d[3]-d[1]),file=out_file)
-          if(display and frame < 20):
-            d = d.astype(np.int32)
-            ax1.add_patch(patches.Rectangle((d[0],d[1]),d[2]-d[0],d[3]-d[1],fill=False,lw=3,ec=colours[d[4]%32,:]))
+                if args.use_conv_features is not None:
+                    frame_features_path = join(seq_features_dir, 'frame{}_f{}.npy'.format(frame, args.use_conv_features))
+                    frame_features = np.load(frame_features_path)
+                else:
+                    frame_features = None
 
-        if(display and frame < 20):
-          fig.canvas.flush_events()
-          plt.draw()
-          ax1.cla()
+                frame += 1 #detection and frame numbers begin at 1
+                dets = seq_dets[seq_dets[:, 0]==frame, 2:7]
+                dets[:, 2:4] += dets[:, 0:2] #convert to [x1,y1,w,h] to [x1,y1,x2,y2]
+                total_frames += 1
+
+                if args.debug_images != "":
+                    debug_img = cv2.imread(join(args.debug_images, seq, 'img1', '%06d.jpg'%(frame)))
+                else:
+                    debug_img = None
+
+                start_time = time.time()
+                trackers = mot_tracker.update(dets, features=frame_features, debug_img=debug_img)
+                cycle_time = time.time() - start_time
+                total_time += cycle_time
+
+                for d in trackers:
+                    print('%d,%d,%.2f,%.2f,%.2f,%.2f,1,-1,-1,-1'%(frame,d[4],d[0],d[1],d[2]-d[0],d[3]-d[1]),file=out_file)
+
+                if args.debug_images != "":
+                    key = cv2.waitKey(0)
+                    if key == ord('s') or key == ord('q'):
+                        break
+        if key == ord('q'):
+            break
         
 
-  print("Total Tracking took: %.3f seconds for %d frames or %.1f FPS" % (total_time, total_frames, total_frames / total_time))
+    print("Total Tracking took: %.3f seconds for %d frames or %.1f FPS" % (total_time, total_frames, total_frames / total_time))
 
-  if(display):
-    print("Note: to get real runtime results run without the option: --display")

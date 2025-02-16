@@ -4,10 +4,11 @@ import numpy as np
 import cv2
 
 
-def draw_bboxes(img, dets, color=(0, 0, 255), xywh_layout=False, id_to_color=None, id_to_trajectory=None):
+def draw_bboxes(img, dets, color=(0, 0, 255), xywh_layout=False, id_to_color=None, id_to_trajectory=None, label_position='over'):
     # gt = dets.shape[-1] == 9
     # color = (0, 0, 255) if gt else (0, 255, 0)
-    for det in dets:
+    dets = copy(dets)
+    for idx, det in enumerate(dets):
         obj_id = det[1]
         if id_to_color is not None and obj_id not in id_to_color:
             id_to_color[obj_id] = (np.random.randint(256), np.random.randint(256), np.random.randint(256))
@@ -30,13 +31,14 @@ def draw_bboxes(img, dets, color=(0, 0, 255), xywh_layout=False, id_to_color=Non
         font_scale = 0.5
         line_thickness = 1
         # print('HELLO')
-        # img = cv2.putText(img, str(det[7:]),
-        #                 (xywh[0], xywh[1] + 15),
-        #                 cv2.FONT_HERSHEY_SIMPLEX,
-        #                 font_scale,
-        #                 (0, 255, 0),
-        #                 line_thickness,
-        #                 cv2.LINE_AA)
+        y_pos = xywh[1] - 7 if label_position == "over" else xywh[1] + 14
+        img = cv2.putText(img, 'idx: {}'.format(idx),
+                        (xywh[0] + 3, y_pos),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        font_scale,
+                        color,
+                        line_thickness,
+                        cv2.LINE_AA)
 
 
 def clip_coords(boxes, img_shape):

@@ -40,7 +40,7 @@ class KalmanBoxTracker(object):
     This class represents the internal state of individual tracked objects observed as bbox.
     """
     count = 0
-    def __init__(self, bbox, dcf_config=None, features=None, features_bbox=None):
+    def __init__(self, bbox, dcf_config=None, features=None, features_bbox=None, debug=None):
         """
         Initialises a tracker using initial bounding box.
         """
@@ -65,7 +65,7 @@ class KalmanBoxTracker(object):
         self.age = 0
 
         if dcf_config is not None and features is not None and features_bbox is not None:
-            self.dcf = DCF(dcf_config, features, features_bbox)
+            self.dcf = DCF(dcf_config, features, features_bbox, debug=debug)
 
     def update(self,bbox):
         """
@@ -102,7 +102,7 @@ class DCF():
 
     G = None
 
-    def __init__(self, dcf_config, features, bbox, debug="init"):
+    def __init__(self, dcf_config, features, bbox, debug=None):
         self.roi_size = dcf_config['roi_size']
         self.sigma = dcf_config['sigma']
         self.search_region_scale = dcf_config['search_region_scale']
@@ -111,6 +111,7 @@ class DCF():
         if DCF.G is None:
             DCF.G = np.fft.fft2(self.get_gauss_response(self.roi_size))
 
+        debug = None if (not debug or debug is None) else "init"
         template = self.crop_search_window(bbox, features, debug=debug)
         fi = self.pre_process(template)
         fftfi = np.fft.fft2(fi)
@@ -122,13 +123,14 @@ class DCF():
     # features in CHW shape
     # bbox in format [x1,y1,x2,y2,score]
     def compute_response(self, features, bbox, debug=None):
-        debug = None if debug is None else "predict"
+        debug = None if (not debug or debug is None) else "predict"
         fi = self.crop_search_window(bbox, features, debug=debug)
         fi = self.pre_process(fi)
         fftfi = np.fft.fft2(fi)
         Gi = self.Hi * fftfi
         Gi = np.sum(Gi, axis=0)
         gi = np.real(np.fft.ifft2(Gi))
+        # print('compte response debug:', debug)
         if debug is not None:
             cv2.imshow('response', gi)
 

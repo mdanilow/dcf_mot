@@ -18,18 +18,20 @@
 from __future__ import print_function
 
 import os
+from os.path import join
+from multiprocessing.pool import ThreadPool
+
 import numpy as np
 import matplotlib
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from skimage import io
-from os.path import join
-
 import glob
 import time
 import argparse
 import cv2
+from tqdm import tqdm
 
 from utils import draw_bboxes, scale_coords
 from box_tracker import KalmanBoxTracker
@@ -69,7 +71,7 @@ def iou_batch(bb_test, bb_gt):
 
 
 class Sort(object):
-    def __init__(self, max_age=1, min_hits=3, iou_threshold=0.3, dcf_config=None):
+    def __init__(self, max_age=1, min_hits=3, iou_threshold=0.3, dcf_config=None, img_shape=None):
         """
         Sets key parameters for SORT
         """
@@ -79,8 +81,9 @@ class Sort(object):
         self.trackers = []
         self.frame_count = 0
         self.dcf_config = dcf_config
+        self.img_shape = img_shape
 
-    def update(self, dets=np.empty((0, 5)), features=None, debug_img=None):
+    def update(self, dets=np.empty((0, 5)), features=None, debug_img=None, debug=None):
         """
         Params:
         dets - a numpy array of detections in the format [[x1,y1,x2,y2,score],[x1,y1,x2,y2,score],...]
@@ -106,7 +109,7 @@ class Sort(object):
 
         # debug visualization
         if self.dcf_config is not None:
-            scaled_dets = scale_coords(debug_img.shape, dets, features.shape[2:])
+            scaled_dets = scale_coords(self.img_shape, dets, features.shape[2:])
         else:
             scaled_dets = None
 
@@ -115,7 +118,8 @@ class Sort(object):
                                                                                    self.iou_threshold,
                                                                                    features=features,
                                                                                    scaled_dets=scaled_dets,
-                                                                                   debug_img=debug_img)
+                                                                                   debug_img=debug_img,
+                                                                                   debug=debug)
 
         # update matched trackers with assigned detections
         for m in matched:
@@ -126,7 +130,8 @@ class Sort(object):
             trk = KalmanBoxTracker(dets[i, :],
                                    self.dcf_config,
                                    features,
-                                   None if scaled_dets is None else scaled_dets[i, :])
+                                   None if scaled_dets is None else scaled_dets[i, :],
+                                   debug=debug)
             self.trackers.append(trk)
         i = len(self.trackers)
         for trk in reversed(self.trackers):
@@ -141,7 +146,7 @@ class Sort(object):
             return np.concatenate(ret)
         return np.empty((0,5))
     
-    def associate_detections_to_trackers(self, detections, trackers, iou_threshold = 0.3, features=None, scaled_dets=None, debug_img=None):
+    def associate_detections_to_trackers(self, detections, trackers, iou_threshold = 0.3, features=None, scaled_dets=None, debug_img=None, debug=None):
         """
         Assigns detections to tracked object (both represented as bounding boxes)
 
@@ -151,20 +156,38 @@ class Sort(object):
             return np.empty((0,2),dtype=int), np.arange(len(detections)), np.empty((0,5),dtype=int)
 
         trackers_bboxes = np.stack([np.squeeze(t.get_state()) for t in trackers])
+        # scaled_trackers_bboxes = scale_coords(debug_img.shape, trackers_bboxes, features.shape[2:])
         # trackers_bboxes = trackers
         iou_matrix = iou_batch(detections, trackers_bboxes)
+        # print('iou matrix:', iou_matrix.shape)
+        # print(iou_matrix)
+
+        def tracker_dcf_task(tracker):
+            res = np.zeros((len(scaled_dets)))
+            for i, det in enumerate(scaled_dets):
+                res[i] = np.max(tracker.dcf.compute_response(features, det))
+            return res
 
         # DCF matrix
         if self.dcf_config is not None:
         # response_matrix = np.array((len(trackers), detections.shape[0], self.dcf_config['roi_size'], self.dcf_config['roi_size']))
-            response_matrix = np.zeros((len(trackers), detections.shape[0]))
+            response_matrix = np.zeros((detections.shape[0], len(trackers)))
+            # response_matrix = np.zeros((len(trackers), len(trackers)))
+
+            # start = time.time()
             for tracker_idx, tracker in enumerate(trackers):
                 for detection_idx, detection in enumerate(scaled_dets):
-                    response_matrix[tracker_idx, detection_idx] = np.max(tracker.dcf.compute_response(features, detection, debug=True))
+                    response_matrix[detection_idx, tracker_idx] = np.max(tracker.dcf.compute_response(features, detection, debug=debug))
 
-            print('dcf response_matrix:')
-            print(response_matrix)
-            draw_bboxes(debug_img, trackers_bboxes, color=(0, 255, 0), label_position="under")
+            # for i, result in enumerate(ThreadPool(8).imap(tracker_dcf_task, trackers)):
+            #     response_matrix[:, i] = result
+            # print('time:', time.time() - start)
+
+            # print('dcf response_matrix:', response_matrix.shape)
+            # print(response_matrix)
+            # sys.exit()
+        if debug:
+            draw_bboxes(debug_img, trackers_bboxes, color=(255, 0, 0), label_position="under")
             draw_bboxes(debug_img, detections)
             cv2.imshow('debug', debug_img)
 
@@ -218,6 +241,7 @@ def parse_args():
     parser.add_argument("--output_dir", help="Path to the output dir", type=str, default="output")
     parser.add_argument("--debug_images", help="Path to directory with sequences in mot format for visualization", type=str, default="")
     parser.add_argument("--use_conv_features", help="Index of detector features to use", type=int, default=None)
+    parser.add_argument("--debug", action='store_true')
     args = parser.parse_args()
     return args
 
@@ -244,16 +268,22 @@ if __name__ == '__main__':
     seqnames = os.listdir(join(args.seq_path, phase))
 
     for seq in seqnames:
+        if args.debug_images != "":
+            img_shape = cv2.imread(join(args.debug_images, seq, 'img1', '%06d.jpg'%(1))).shape
+        else:
+            img_shape = None
         mot_tracker = Sort(max_age=args.max_age, 
                             min_hits=args.min_hits,
                             iou_threshold=args.iou_threshold,
-                            dcf_config=dcf_config if args.use_conv_features is not None else None) #create instance of the SORT tracker
+                            dcf_config=dcf_config if args.use_conv_features is not None else None,
+                            img_shape=img_shape) #create instance of the SORT tracker
         seq_dets = np.loadtxt(join(args.seq_path, phase, seq, 'det', 'det.txt'), delimiter=',')
         seq_features_dir = join(args.seq_path, phase, seq, 'features')
 
         with open(os.path.join(output_dir, '%s.txt'%(seq)),'w') as out_file:
-            print("Processing %s."%(seq))
-            for frame in range(int(seq_dets[:,0].max())):
+            print("Processing %s."%(seq), args.debug)
+            pbar = tqdm(range(int(seq_dets[:,0].max())))
+            for frame in pbar:
                 if args.use_conv_features is not None:
                     frame_features_path = join(seq_features_dir, 'frame{}_f{}.npy'.format(frame, args.use_conv_features))
                     frame_features = np.load(frame_features_path)
@@ -265,20 +295,20 @@ if __name__ == '__main__':
                 dets[:, 2:4] += dets[:, 0:2] #convert to [x1,y1,w,h] to [x1,y1,x2,y2]
                 total_frames += 1
 
-                if args.debug_images != "":
+                if args.debug and args.debug_images != "":
                     debug_img = cv2.imread(join(args.debug_images, seq, 'img1', '%06d.jpg'%(frame)))
                 else:
                     debug_img = None
 
                 start_time = time.time()
-                trackers = mot_tracker.update(dets, features=frame_features, debug_img=debug_img)
+                trackers = mot_tracker.update(dets, features=frame_features, debug_img=debug_img, debug=args.debug)
                 cycle_time = time.time() - start_time
                 total_time += cycle_time
 
                 for d in trackers:
                     print('%d,%d,%.2f,%.2f,%.2f,%.2f,1,-1,-1,-1'%(frame,d[4],d[0],d[1],d[2]-d[0],d[3]-d[1]),file=out_file)
 
-                if args.debug_images != "":
+                if args.debug and args.debug_images != "":
                     key = cv2.waitKey(0)
                     if key == ord('s') or key == ord('q'):
                         break

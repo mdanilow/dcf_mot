@@ -172,6 +172,8 @@ class DCF():
     # bbox in format [x1,y1,x2,y2,score]
     def crop_search_window(self, bbox, features, debug=None):
 
+        if len(features.shape) == 4:
+            features = features[0]
         xmin, ymin, xmax, ymax = bbox[:4]
         width = xmax - xmin
         height = ymax - ymin
@@ -187,7 +189,7 @@ class DCF():
             x_pad = int(width * self.search_region_scale)
             y_pad = int(height * self.search_region_scale)
             # to HWC
-            features = features[0].transpose(1, 2, 0)
+            features = features.transpose(1, 2, 0)
             features = cv2.copyMakeBorder(features, y_pad, y_pad, x_pad, x_pad, cv2.BORDER_REFLECT)
             xmin += x_pad
             xmax += x_pad
@@ -209,7 +211,6 @@ class DCF():
             window = cv2.resize(window, (self.roi_size, self.roi_size))
 
         if debug is not None:
-            print('features:', features.shape)
             i = 14
             ch = features[14]
             # for i, ch in enumerate(features):

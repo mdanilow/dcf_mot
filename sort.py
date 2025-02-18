@@ -18,6 +18,7 @@
 from __future__ import print_function
 
 import os
+import sys
 from os.path import join
 from multiprocessing.pool import ThreadPool
 
@@ -82,6 +83,7 @@ class Sort(object):
         self.frame_count = 0
         self.dcf_config = dcf_config
         self.img_shape = img_shape
+        self.max_dcf_response = 0
 
     def update(self, dets=np.empty((0, 5)), features=None, debug_img=None, debug=None):
         """
@@ -123,7 +125,9 @@ class Sort(object):
 
         # update matched trackers with assigned detections
         for m in matched:
-            self.trackers[m[1]].update(dets[m[0], :])
+            bbox = dets[m[0], :]
+            scaled_bbox = None if scaled_dets is None else scaled_dets[m[0], :]
+            self.trackers[m[1]].update(bbox, features=features, features_bbox=scaled_bbox)
 
         # create and initialise new trackers for unmatched detections
         for i in unmatched_dets:
@@ -146,6 +150,28 @@ class Sort(object):
             return np.concatenate(ret)
         return np.empty((0,5))
     
+
+    def compute_dcf_cost_matrix(self, scaled_dets, trackers, features, debug):
+        # response_matrix = np.array((len(trackers), detections.shape[0], self.dcf_config['roi_size'], self.dcf_config['roi_size']))
+        response_matrix = np.zeros((scaled_dets.shape[0], len(trackers)))
+        # response_matrix = np.zeros((len(trackers), len(trackers)))
+
+        # start = time.time()
+        for tracker_idx, tracker in enumerate(trackers):
+            for detection_idx, detection in enumerate(scaled_dets):
+                response_matrix[detection_idx, tracker_idx] = np.max(tracker.dcf.compute_response(features, detection, debug=debug))
+
+        local_max_response = np.max(response_matrix)
+        if local_max_response > self.max_dcf_response:
+            self.max_dcf_response = local_max_response
+        # for i, result in enumerate(ThreadPool(8).imap(tracker_dcf_task, trackers)):
+        #     response_matrix[:, i] = result
+        # print('time:', time.time() - start)
+        cost_matrix = -response_matrix
+
+        return cost_matrix
+
+
     def associate_detections_to_trackers(self, detections, trackers, iou_threshold = 0.3, features=None, scaled_dets=None, debug_img=None, debug=None):
         """
         Assigns detections to tracked object (both represented as bounding boxes)
@@ -156,49 +182,40 @@ class Sort(object):
             return np.empty((0,2),dtype=int), np.arange(len(detections)), np.empty((0,5),dtype=int)
 
         trackers_bboxes = np.stack([np.squeeze(t.get_state()) for t in trackers])
+        if debug:
+            draw_bboxes(debug_img, trackers_bboxes, color=(255, 0, 0), label_position="under")
+            draw_bboxes(debug_img, detections)
+            cv2.imshow('debug', debug_img)
         # scaled_trackers_bboxes = scale_coords(debug_img.shape, trackers_bboxes, features.shape[2:])
         # trackers_bboxes = trackers
         iou_matrix = iou_batch(detections, trackers_bboxes)
         # print('iou matrix:', iou_matrix.shape)
         # print(iou_matrix)
 
-        def tracker_dcf_task(tracker):
-            res = np.zeros((len(scaled_dets)))
-            for i, det in enumerate(scaled_dets):
-                res[i] = np.max(tracker.dcf.compute_response(features, det))
-            return res
-
-        # DCF matrix
-        if self.dcf_config is not None:
-        # response_matrix = np.array((len(trackers), detections.shape[0], self.dcf_config['roi_size'], self.dcf_config['roi_size']))
-            response_matrix = np.zeros((detections.shape[0], len(trackers)))
-            # response_matrix = np.zeros((len(trackers), len(trackers)))
-
-            # start = time.time()
-            for tracker_idx, tracker in enumerate(trackers):
-                for detection_idx, detection in enumerate(scaled_dets):
-                    response_matrix[detection_idx, tracker_idx] = np.max(tracker.dcf.compute_response(features, detection, debug=debug))
-
-            # for i, result in enumerate(ThreadPool(8).imap(tracker_dcf_task, trackers)):
-            #     response_matrix[:, i] = result
-            # print('time:', time.time() - start)
-
-            # print('dcf response_matrix:', response_matrix.shape)
-            # print(response_matrix)
-            # sys.exit()
-        if debug:
-            draw_bboxes(debug_img, trackers_bboxes, color=(255, 0, 0), label_position="under")
-            draw_bboxes(debug_img, detections)
-            cv2.imshow('debug', debug_img)
-
         if min(iou_matrix.shape) > 0:
             a = (iou_matrix > iou_threshold).astype(np.int32)
             if a.sum(1).max() == 1 and a.sum(0).max() == 1:
                 matched_indices = np.stack(np.where(a), axis=1)
             else:
-                matched_indices = linear_assignment(-iou_matrix)
+                # DCF matrix
+                if self.dcf_config is not None:
+                    cost_matrix = self.compute_dcf_cost_matrix(scaled_dets, trackers, features, debug=debug)
+                    cost_matrix = np.where(iou_matrix <= iou_threshold, 1e+5, cost_matrix)
+                else:
+                    cost_matrix = -iou_matrix
+                # print('cost_matrix:', cost_matrix)
+                matched_indices = linear_assignment(cost_matrix)
         else:
             matched_indices = np.empty(shape=(0,2))
+            
+        # if min(iou_matrix.shape) > 0:
+        #     a = (iou_matrix > iou_threshold).astype(np.int32)
+        #     if a.sum(1).max() == 1 and a.sum(0).max() == 1:
+        #         matched_indices = np.stack(np.where(a), axis=1)
+        #     else:
+        #         matched_indices = linear_assignment(cost_matrix)
+        # else:
+        #     matched_indices = np.empty(shape=(0,2))
 
         unmatched_detections = []
         for d, det in enumerate(detections):
@@ -242,6 +259,7 @@ def parse_args():
     parser.add_argument("--debug_images", help="Path to directory with sequences in mot format for visualization", type=str, default="")
     parser.add_argument("--use_conv_features", help="Index of detector features to use", type=int, default=None)
     parser.add_argument("--debug", action='store_true')
+    parser.add_argument("--name", help="experiment name in output dir", type=str, default="")
     args = parser.parse_args()
     return args
 
@@ -253,16 +271,21 @@ if __name__ == '__main__':
     total_time = 0.0
     total_frames = 0
     colours = np.random.rand(32, 3) #used only for display
-    output_dir = join(args.output_dir, phase, 'data')
+    name = phase + "_" + args.name if args.name != "" else phase
+    output_dir = join(args.output_dir, name, 'data')
     key = None
     dcf_config = {
         'roi_size': 64,
         'sigma': 7,
-        'search_region_scale': 2,
+        'search_region_scale': 1,
         'crop_mode': "roi_pool",
-        'lambd': 0.01
+        'lambd': 0.01,
+        'lr': 0.025
     }
 
+    if args.name != "" and os.path.exists(output_dir):
+        print('WARNING: output directory {} already exists, exiting...' )
+        sys.exit()
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
     seqnames = os.listdir(join(args.seq_path, phase))
@@ -312,6 +335,8 @@ if __name__ == '__main__':
                     key = cv2.waitKey(0)
                     if key == ord('s') or key == ord('q'):
                         break
+
+            print('Max dcf response in sequence:', mot_tracker.max_dcf_response)
         if key == ord('q'):
             break
         

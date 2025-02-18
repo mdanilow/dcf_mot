@@ -67,7 +67,7 @@ class KalmanBoxTracker(object):
         if dcf_config is not None and features is not None and features_bbox is not None:
             self.dcf = DCF(dcf_config, features, features_bbox, debug=debug)
 
-    def update(self,bbox):
+    def update(self, bbox, features=None, features_bbox=None):
         """
         Updates the state vector with observed bbox.
         """
@@ -76,6 +76,8 @@ class KalmanBoxTracker(object):
         self.hits += 1
         self.hit_streak += 1
         self.kf.update(convert_bbox_to_z(bbox))
+        # if features is not None and features_bbox is not None:
+        #     self.dcf.update_filter(features, features_bbox)
 
     def predict(self):
         """
@@ -108,6 +110,7 @@ class DCF():
         self.search_region_scale = dcf_config['search_region_scale']
         self.crop_mode = dcf_config['crop_mode']
         self.lambd = dcf_config['lambd']
+        self.lr = dcf_config['lr']
         if DCF.G is None:
             DCF.G = np.fft.fft2(self.get_gauss_response(self.roi_size))
 
@@ -135,6 +138,16 @@ class DCF():
             cv2.imshow('response', gi)
 
         return gi
+    
+
+    def update_filter(self, features, bbox, debug=None):
+        debug = None if (not debug or debug is None) else "update"
+        fi = self.crop_search_window(bbox, features, debug=debug)
+        fi = self.pre_process(fi)
+        fftfi = np.fft.fft2(fi)
+        self.Ai = self.lr * (DCF.G * np.conjugate(fftfi)) + (1 - self.lr) * self.Ai
+        self.Bi = self.lr * (np.sum(fftfi * np.conjugate(fftfi) + self.lambd, axis=0)) + (1 - self.lr) * self.Bi
+
 
     def get_gauss_response(self, size):
 
@@ -196,6 +209,7 @@ class DCF():
             window = cv2.resize(window, (self.roi_size, self.roi_size))
 
         if debug is not None:
+            print('features:', features.shape)
             i = 14
             ch = features[14]
             # for i, ch in enumerate(features):

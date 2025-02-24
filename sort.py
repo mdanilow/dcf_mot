@@ -159,7 +159,8 @@ class Sort(object):
         # start = time.time()
         for tracker_idx, tracker in enumerate(trackers):
             for detection_idx, detection in enumerate(scaled_dets):
-                response_matrix[detection_idx, tracker_idx] = np.max(tracker.dcf.compute_response(features, detection, debug=debug))
+                dcf_response = tracker.dcf.compute_response(features, detection, debug=debug, debug_idx=detection_idx)
+                response_matrix[detection_idx, tracker_idx] = np.max(dcf_response)
 
         local_max_response = np.max(response_matrix)
         if local_max_response > self.max_dcf_response:
@@ -205,9 +206,11 @@ class Sort(object):
                     cost_matrix = -iou_matrix
                 # print('cost_matrix:', cost_matrix)
                 matched_indices = linear_assignment(cost_matrix)
+
         else:
             matched_indices = np.empty(shape=(0,2))
             
+        # OLD
         # if min(iou_matrix.shape) > 0:
         #     a = (iou_matrix > iou_threshold).astype(np.int32)
         #     if a.sum(1).max() == 1 and a.sum(0).max() == 1:

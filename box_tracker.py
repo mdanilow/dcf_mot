@@ -125,9 +125,9 @@ class DCF():
 
     # features in CHW shape
     # bbox in format [x1,y1,x2,y2,score]
-    def compute_response(self, features, bbox, debug=None):
+    def compute_response(self, features, bbox, debug=None, debug_idx=None):
         debug = None if (not debug or debug is None) else "predict"
-        fi = self.crop_search_window(bbox, features, debug=debug)
+        fi = self.crop_search_window(bbox, features, debug=debug, debug_idx=debug_idx)
         fi = self.pre_process(fi)
         fftfi = np.fft.fft2(fi)
         Gi = self.Hi * fftfi
@@ -135,7 +135,8 @@ class DCF():
         gi = np.real(np.fft.ifft2(Gi))
         # print('compte response debug:', debug)
         if debug is not None:
-            cv2.imshow('response', gi)
+            debug_idx = "" if debug_idx is None else str(debug_idx)
+            cv2.imshow('response ' + debug_idx, gi)
 
         return gi
     
@@ -170,7 +171,7 @@ class DCF():
     
     # features in CHW shape
     # bbox in format [x1,y1,x2,y2,score]
-    def crop_search_window(self, bbox, features, debug=None):
+    def crop_search_window(self, bbox, features, debug=None, debug_idx=None):
 
         if len(features.shape) == 4:
             features = features[0]
@@ -217,10 +218,9 @@ class DCF():
             test = ((ch - np.min(ch)) / (np.max(ch) - np.min(ch))) * 255
             test = np.stack([test] * 3, axis=2)
             draw_bboxes(test, np.array([[xmin, ymin, xmax, ymax]]))
-            cv2.imshow('{} features {}'.format(debug, i), test)
-            # print(demoroi.shape)
-            cv2.imshow(debug + ' roi' + str(i), window.transpose(1, 2, 0)[:, :, i])
-            # cv2.imshow(debug + ' window' + str(i), window[:, :, i])
+            debug_idx = "" if debug_idx is None else str(debug_idx)
+            cv2.imshow('{} features {}'.format(debug, debug_idx), test)
+            cv2.imshow(debug + ' roi ' + debug_idx, window.transpose(1, 2, 0)[:, :, i])
 
         return window
 

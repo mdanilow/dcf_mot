@@ -40,7 +40,7 @@ class KalmanBoxTracker(object):
     This class represents the internal state of individual tracked objects observed as bbox.
     """
     count = 0
-    def __init__(self, bbox, dcf_config=None, features=None, features_bbox=None, debug=None):
+    def __init__(self, bbox, hits_to_be_confirmed=3, dcf_config=None, features=None, features_bbox=None, debug=None, index=None):
         """
         Initialises a tracker using initial bounding box.
         """
@@ -63,9 +63,13 @@ class KalmanBoxTracker(object):
         self.hits = 0
         self.hit_streak = 0
         self.age = 0
+        self.hits_to_be_confirmed =  hits_to_be_confirmed
 
         if dcf_config is not None and features is not None and features_bbox is not None:
-            self.dcf = DCF(dcf_config, features, features_bbox, debug=debug)
+            self.dcf = DCF(dcf_config, features, features_bbox, debug=debug, index=index)
+
+    def is_confirmed(self):
+        return self.hits >= self.hits_to_be_confirmed
 
     def update(self, bbox, features=None, features_bbox=None):
         """
@@ -104,16 +108,18 @@ class DCF():
 
     G = None
 
-    def __init__(self, dcf_config, features, bbox, debug=None):
+    def __init__(self, dcf_config, features, bbox, debug=None, index=None):
         self.roi_size = dcf_config['roi_size']
         self.sigma = dcf_config['sigma']
         self.search_region_scale = dcf_config['search_region_scale']
         self.crop_mode = dcf_config['crop_mode']
         self.lambd = dcf_config['lambd']
         self.lr = dcf_config['lr']
+        self.normalize_features = dcf_config['normalize_features']
         if DCF.G is None:
             DCF.G = np.fft.fft2(self.get_gauss_response(self.roi_size))
 
+        self.index = index
         debug = None if (not debug or debug is None) else "init"
         template = self.crop_search_window(bbox, features, debug=debug)
         fi = self.pre_process(template)
@@ -122,6 +128,8 @@ class DCF():
         self.Bi = fftfi * np.conjugate(fftfi) + self.lambd
         self.Bi = self.Bi.sum(axis=0)
         self.Hi = self.Ai / self.Bi
+
+        # self.selfcorr = np.max(self.compute_response(features, bbox))
 
     # features in CHW shape
     # bbox in format [x1,y1,x2,y2,score]
@@ -230,6 +238,9 @@ class DCF():
         # img = np.log(img + 1)
         # print('img:', img)
         # img = (img - np.mean(img)) / (np.std(img) + 1e-5)
+        if self.normalize_features:
+            img = img + np.min(img)
+            img = img / np.max(img)
 
         window = window_func_2d(height, width)
         img = img * window

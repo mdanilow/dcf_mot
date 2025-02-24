@@ -32,7 +32,7 @@ def draw_bboxes(img, dets, color=(0, 0, 255), xywh_layout=False, id_to_color=Non
         line_thickness = 1
         # print('HELLO')
         y_pos = xywh[1] - 7 if label_position == "over" else xywh[1] + 14
-        img = cv2.putText(img, 'idx: {}'.format(idx),
+        img = cv2.putText(img, 'i: {}'.format(idx),
                         (xywh[0] + 3, y_pos),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         font_scale,

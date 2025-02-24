@@ -33,6 +33,7 @@ import time
 import argparse
 import cv2
 from tqdm import tqdm
+from scipy.optimize import linear_sum_assignment
 
 from utils import draw_bboxes, scale_coords
 from box_tracker import KalmanBoxTracker
@@ -40,14 +41,26 @@ from box_tracker import KalmanBoxTracker
 np.random.seed(0)
 
 
-def linear_assignment(cost_matrix):
-  try:
-    import lap
-    _, x, y = lap.lapjv(cost_matrix, extend_cost=True)
-    return np.array([[y[i],i] for i in x if i >= 0]) #
-  except ImportError:
-    from scipy.optimize import linear_sum_assignment
+def linear_assignment(cost_matrix, rows_indices=None, cols_indices=None):
+#   try:
+#     import lap
+#     _, x, y = lap.lapjv(cost_matrix, extend_cost=True)
+#     return np.array([[y[i],i] for i in x if i >= 0]) #
+#   except ImportError:
+    # print('rowcol indices:', rows_indices, cols_indices)
+    # print('matrix:')
+    # print(cost_matrix)
+    if rows_indices is not None and cols_indices is not None:
+        cost_matrix = cost_matrix[np.ix_(rows_indices, cols_indices)]
+    # print('submatrix:')
+    # print(cost_matrix)
+
     x, y = linear_sum_assignment(cost_matrix)
+
+    if rows_indices is not None and cols_indices is not None:
+        x = [rows_indices[i] for i in x]
+        y = [cols_indices[i] for i in y]
+
     return np.array(list(zip(x, y)))
 
 
@@ -72,16 +85,24 @@ def iou_batch(bb_test, bb_gt):
 
 
 class Sort(object):
-    def __init__(self, max_age=1, min_hits=3, iou_threshold=0.3, dcf_config=None, img_shape=None):
+    def __init__(self, tracker_config, dcf_config=None, img_shape=None):
         """
         Sets key parameters for SORT
         """
-        self.max_age = max_age
-        self.min_hits = min_hits
-        self.iou_threshold = iou_threshold
+        association_fn_lookup = {
+            'iou': self.associate_iou,
+            'cascaded': self.associate_cascaded
+        }
+        self.max_age = tracker_config['max_age']
+        self.min_hits = tracker_config['min_hits']
+        self.hits_to_be_confirmed = tracker_config['hits_to_be_confirmed']
+        self.iou_threshold = tracker_config['iou_threshold']
+        self.max_iou_for_new_target = tracker_config['max_iou_for_new_target']
+        self.association_strategy = association_fn_lookup[tracker_config['strategy']]
+
+        self.dcf_config = dcf_config
         self.trackers = []
         self.frame_count = 0
-        self.dcf_config = dcf_config
         self.img_shape = img_shape
         self.max_dcf_response = 0
 
@@ -95,6 +116,7 @@ class Sort(object):
         NOTE: The number of objects returned may differ from the number of detections provided.
         """
         # print('update, trackers:', len(self.trackers), 'detections:', dets.shape[0])
+        # print(dets)
         self.frame_count += 1
         # get predicted locations from existing trackers.
         trks = np.zeros((len(self.trackers), 5))
@@ -115,13 +137,12 @@ class Sort(object):
         else:
             scaled_dets = None
 
-        matched, unmatched_dets, unmatched_trks = self.associate_detections_to_trackers(dets,
-                                                                                   self.trackers,
-                                                                                   self.iou_threshold,
-                                                                                   features=features,
-                                                                                   scaled_dets=scaled_dets,
-                                                                                   debug_img=debug_img,
-                                                                                   debug=debug)
+        matched, unmatched_dets, unmatched_trks = self.association_strategy(dets,
+                                                                    self.trackers,
+                                                                    features=features,
+                                                                    scaled_dets=scaled_dets,
+                                                                    debug_img=debug_img,
+                                                                    debug=debug)
 
         # update matched trackers with assigned detections
         for m in matched:
@@ -132,10 +153,12 @@ class Sort(object):
         # create and initialise new trackers for unmatched detections
         for i in unmatched_dets:
             trk = KalmanBoxTracker(dets[i, :],
+                                   self.hits_to_be_confirmed,
                                    self.dcf_config,
                                    features,
                                    None if scaled_dets is None else scaled_dets[i, :],
-                                   debug=debug)
+                                   debug=debug,
+                                   index=len(self.trackers))
             self.trackers.append(trk)
         i = len(self.trackers)
         for trk in reversed(self.trackers):
@@ -160,7 +183,11 @@ class Sort(object):
         for tracker_idx, tracker in enumerate(trackers):
             for detection_idx, detection in enumerate(scaled_dets):
                 dcf_response = tracker.dcf.compute_response(features, detection, debug=debug, debug_idx=detection_idx)
-                response_matrix[detection_idx, tracker_idx] = np.max(dcf_response)
+                # print('resp:', np.max(dcf_response), 'selfcorr:', tracker.dcf.selfcorr)
+                max_response = np.max(dcf_response)
+                if max_response > tracker.dcf.selfcorr:
+                    print('Frame {}: track {} correlation with detection {} bigger than self correlation:'.format(self.frame_count, tracker_idx, detection_idx), max_response, tracker.dcf.selfcorr)
+                response_matrix[detection_idx, tracker_idx] = max_response
 
         local_max_response = np.max(response_matrix)
         if local_max_response > self.max_dcf_response:
@@ -171,9 +198,87 @@ class Sort(object):
         cost_matrix = -response_matrix
 
         return cost_matrix
+    
+
+    def associate_cascaded(self, detections, trackers, features=None, scaled_dets=None, debug_img=None, debug=None):
+        """
+        Assigns detections to tracked object (both represented as bounding boxes)
+
+        Returns 3 lists of matches, unmatched_detections and unmatched_trackers
+        """
+        if(len(trackers)==0):
+            return np.empty((0,2),dtype=int), np.arange(len(detections)), np.empty((0,5),dtype=int)
+
+        trackers_bboxes = np.stack([np.squeeze(t.get_state()) for t in trackers])
+        if debug:
+            draw_bboxes(debug_img, trackers_bboxes, color=(255, 0, 0), label_position="under")
+            draw_bboxes(debug_img, detections)
+            cv2.imshow('debug', debug_img)
+        # scaled_trackers_bboxes = scale_coords(debug_img.shape, trackers_bboxes, features.shape[2:])
+        # trackers_bboxes = trackers
+        iou_matrix = iou_batch(detections, trackers_bboxes)
+        # trackers_indices_to_match = range(len(trackers))
+        detection_indices_to_match = list(range(len(detections)))
+
+        matches = np.empty(shape=(0,2))
+        if min(iou_matrix.shape) > 0:
+            a = (iou_matrix >= self.iou_threshold).astype(np.int32)
+            if a.sum(1).max() == 1 and a.sum(0).max() == 1:
+                matched_indices = np.stack(np.where(a), axis=1)
+            else:
+                # cost matrix
+                if self.dcf_config is not None:
+                    cost_matrix = self.compute_dcf_cost_matrix(scaled_dets, trackers, features, debug=debug)
+                    # cost_matrix = np.where(iou_matrix <= iou_threshold, 1e+5, cost_matrix)
+                else:
+                    cost_matrix = -iou_matrix
+                
+                # matching cascade
+                for age in range(self.max_age):
+                    # print('age', age)
+                    if len(detection_indices_to_match) == 0:
+                        break
+                    tracker_indices_to_match = [i for i in range(len(trackers))
+                                                if trackers[i].time_since_update == (age + 1)]
+                    matched_indices = linear_assignment(cost_matrix,
+                                                        rows_indices=detection_indices_to_match,
+                                                        cols_indices=tracker_indices_to_match)
+                    # filter matches by iou
+                    matched_indices = [m for m in matched_indices
+                                       if iou_matrix[m[0], m[1]] >= self.iou_threshold]
+                    detection_indices_to_match = [i for i in detection_indices_to_match
+                                                  if i not in matched_indices[:, 0]]
+                    matches = np.concatenate([matches, matched_indices], axis=0)
+
+        # every unmatched detection will be considered a new track
+        unmatched_detections = []
+        for d, det in enumerate(detections):
+            if(d not in matches[:,0]):
+                closest_track_iou = np.max(iou_matrix[d])
+                if closest_track_iou < self.max_iou_for_new_target:
+                    unmatched_detections.append(d)
+
+        unmatched_trackers = []
+        for t, trk in enumerate(trackers):
+            if(t not in matches[:,1]):
+                unmatched_trackers.append(t)
+
+        #filter out matched with low IOU
+        for m in matches:
+            if(iou_matrix[m[0], m[1]] < self.iou_threshold):
+                unmatched_detections.append(m[0])
+                unmatched_trackers.append(m[1])
+            else:
+                matches.append(m.reshape(1,2))
+        if(len(matches)==0):
+            matches = np.empty((0,2),dtype=int)
+        else:
+            matches = np.concatenate(matches,axis=0)
+
+        return matches, np.array(unmatched_detections), np.array(unmatched_trackers)
 
 
-    def associate_detections_to_trackers(self, detections, trackers, iou_threshold = 0.3, features=None, scaled_dets=None, debug_img=None, debug=None):
+    def associate_iou(self, detections, trackers, features=None, scaled_dets=None, debug_img=None, debug=None):
         """
         Assigns detections to tracked object (both represented as bounding boxes)
 
@@ -194,14 +299,14 @@ class Sort(object):
         # print(iou_matrix)
 
         if min(iou_matrix.shape) > 0:
-            a = (iou_matrix > iou_threshold).astype(np.int32)
+            a = (iou_matrix > self.iou_threshold).astype(np.int32)
             if a.sum(1).max() == 1 and a.sum(0).max() == 1:
                 matched_indices = np.stack(np.where(a), axis=1)
             else:
                 # DCF matrix
                 if self.dcf_config is not None:
                     cost_matrix = self.compute_dcf_cost_matrix(scaled_dets, trackers, features, debug=debug)
-                    cost_matrix = np.where(iou_matrix <= iou_threshold, 1e+5, cost_matrix)
+                    cost_matrix = np.where(iou_matrix <= self.iou_threshold, 1e+5, cost_matrix)
                 else:
                     cost_matrix = -iou_matrix
                 # print('cost_matrix:', cost_matrix)
@@ -232,7 +337,7 @@ class Sort(object):
         #filter out matched with low IOU
         matches = []
         for m in matched_indices:
-            if(iou_matrix[m[0], m[1]]<iou_threshold):
+            if(iou_matrix[m[0], m[1]] < self.iou_threshold):
                 unmatched_detections.append(m[0])
                 unmatched_trackers.append(m[1])
             else:
@@ -251,13 +356,13 @@ def parse_args():
     parser.add_argument('--display', dest='display', help='Display online tracker output (slow) [False]',action='store_true')
     parser.add_argument("--seq_path", help="Path to detections.", type=str, default='data')
     parser.add_argument("--phase", help="Subdirectory in seq_path.", type=str, default='neweval')
-    parser.add_argument("--max_age", 
-                        help="Maximum number of frames to keep alive a track without associated detections.", 
-                        type=int, default=1)
-    parser.add_argument("--min_hits", 
-                        help="Minimum number of associated detections before track is initialised.", 
-                        type=int, default=2)
-    parser.add_argument("--iou_threshold", help="Minimum IOU for match.", type=float, default=0.3)
+    # parser.add_argument("--max_age", 
+    #                     help="Maximum number of frames to keep alive a track without associated detections.", 
+    #                     type=int, default=1)
+    # parser.add_argument("--min_hits", 
+    #                     help="Minimum number of associated detections before track is initialised.", 
+    #                     type=int, default=2)
+    # parser.add_argument("--iou_threshold", help="Minimum IOU for match.", type=float, default=0.3)
     parser.add_argument("--output_dir", help="Path to the output dir", type=str, default="output")
     parser.add_argument("--debug_images", help="Path to directory with sequences in mot format for visualization", type=str, default="")
     parser.add_argument("--use_conv_features", help="Index of detector features to use", type=int, default=None)
@@ -277,13 +382,22 @@ if __name__ == '__main__':
     name = phase + "_" + args.name if args.name != "" else phase
     output_dir = join(args.output_dir, name, 'data')
     key = None
+    tracker_config = {
+        'strategy': 'iou',
+        'max_age': 1,                   # Maximum number of frames to keep alive a track without associated detections.
+        'min_hits': 2,                  # Minimum number of associated detections for tracker to be reported as output.
+        'iou_threshold': 0.3,           # Minimum IOU for match.
+        'max_iou_for_new_target': 1,  # Maximum IOU to other tracks for detection to be considered a new track
+        'hits_to_be_confirmed': 3
+    }
     dcf_config = {
         'roi_size': 64,
         'sigma': 7,
         'search_region_scale': 1,
         'crop_mode': "roi_pool",
         'lambd': 0.01,
-        'lr': 0.025
+        'lr': 0.025,
+        'normalize_features': True
     }
 
     if args.name != "" and os.path.exists(output_dir):
@@ -298,9 +412,7 @@ if __name__ == '__main__':
             img_shape = cv2.imread(join(args.debug_images, seq, 'img1', '%06d.jpg'%(1))).shape
         else:
             img_shape = None
-        mot_tracker = Sort(max_age=args.max_age, 
-                            min_hits=args.min_hits,
-                            iou_threshold=args.iou_threshold,
+        mot_tracker = Sort(tracker_config=tracker_config,
                             dcf_config=dcf_config if args.use_conv_features is not None else None,
                             img_shape=img_shape) #create instance of the SORT tracker
         seq_dets = np.loadtxt(join(args.seq_path, phase, seq, 'det', 'det.txt'), delimiter=',')
@@ -317,6 +429,8 @@ if __name__ == '__main__':
                     frame_features = None
 
                 frame += 1 #detection and frame numbers begin at 1
+                # if seq == "KITTI-13" and frame == 214:
+                #     args.debug = True
                 dets = seq_dets[seq_dets[:, 0]==frame, 2:7]
                 dets[:, 2:4] += dets[:, 0:2] #convert to [x1,y1,w,h] to [x1,y1,x2,y2]
                 total_frames += 1

@@ -34,6 +34,7 @@ import argparse
 import cv2
 from tqdm import tqdm
 from scipy.optimize import linear_sum_assignment
+import json
 
 from utils import draw_bboxes, scale_coords
 from box_tracker import KalmanBoxTracker
@@ -220,11 +221,11 @@ class Sort(object):
         # trackers_indices_to_match = range(len(trackers))
         detection_indices_to_match = list(range(len(detections)))
 
-        matches = np.empty(shape=(0,2))
+        matches = np.empty(shape=(0,2), dtype=int)
         if min(iou_matrix.shape) > 0:
             a = (iou_matrix >= self.iou_threshold).astype(np.int32)
             if a.sum(1).max() == 1 and a.sum(0).max() == 1:
-                matched_indices = np.stack(np.where(a), axis=1)
+                matches = np.stack(np.where(a), axis=1)
             else:
                 # cost matrix
                 if self.dcf_config is not None:
@@ -235,7 +236,6 @@ class Sort(object):
                 
                 # matching cascade
                 for age in range(self.max_age):
-                    # print('age', age)
                     if len(detection_indices_to_match) == 0:
                         break
                     tracker_indices_to_match = [i for i in range(len(trackers))
@@ -244,11 +244,12 @@ class Sort(object):
                                                         rows_indices=detection_indices_to_match,
                                                         cols_indices=tracker_indices_to_match)
                     # filter matches by iou
-                    matched_indices = [m for m in matched_indices
-                                       if iou_matrix[m[0], m[1]] >= self.iou_threshold]
-                    detection_indices_to_match = [i for i in detection_indices_to_match
-                                                  if i not in matched_indices[:, 0]]
-                    matches = np.concatenate([matches, matched_indices], axis=0)
+                    matched_indices = np.array([m for m in matched_indices
+                                                if iou_matrix[m[0], m[1]] >= self.iou_threshold])
+                    if matched_indices.shape[0] > 0:
+                        detection_indices_to_match = [i for i in detection_indices_to_match
+                                                      if i not in matched_indices[:, 0]]
+                        matches = np.concatenate([matches, matched_indices], axis=0)
 
         # every unmatched detection will be considered a new track
         unmatched_detections = []
@@ -262,18 +263,6 @@ class Sort(object):
         for t, trk in enumerate(trackers):
             if(t not in matches[:,1]):
                 unmatched_trackers.append(t)
-
-        #filter out matched with low IOU
-        for m in matches:
-            if(iou_matrix[m[0], m[1]] < self.iou_threshold):
-                unmatched_detections.append(m[0])
-                unmatched_trackers.append(m[1])
-            else:
-                matches.append(m.reshape(1,2))
-        if(len(matches)==0):
-            matches = np.empty((0,2),dtype=int)
-        else:
-            matches = np.concatenate(matches,axis=0)
 
         return matches, np.array(unmatched_detections), np.array(unmatched_trackers)
 
@@ -328,7 +317,10 @@ class Sort(object):
         unmatched_detections = []
         for d, det in enumerate(detections):
             if(d not in matched_indices[:,0]):
-                unmatched_detections.append(d)
+                closest_track_iou = np.max(iou_matrix[d])
+                if closest_track_iou < self.max_iou_for_new_target:
+                    unmatched_detections.append(d)
+
         unmatched_trackers = []
         for t, trk in enumerate(trackers):
             if(t not in matched_indices[:,1]):
@@ -353,7 +345,6 @@ class Sort(object):
 def parse_args():
     """Parse input arguments."""
     parser = argparse.ArgumentParser(description='SORT demo')
-    parser.add_argument('--display', dest='display', help='Display online tracker output (slow) [False]',action='store_true')
     parser.add_argument("--seq_path", help="Path to detections.", type=str, default='data')
     parser.add_argument("--phase", help="Subdirectory in seq_path.", type=str, default='neweval')
     # parser.add_argument("--max_age", 
@@ -374,20 +365,18 @@ def parse_args():
 if __name__ == '__main__':
     # all train
     args = parse_args()
-    display = args.display
     phase = args.phase
     total_time = 0.0
     total_frames = 0
-    colours = np.random.rand(32, 3) #used only for display
     name = phase + "_" + args.name if args.name != "" else phase
     output_dir = join(args.output_dir, name, 'data')
     key = None
     tracker_config = {
-        'strategy': 'iou',
-        'max_age': 1,                   # Maximum number of frames to keep alive a track without associated detections.
+        'strategy': 'cascaded',
+        'max_age': 5,                   # Maximum number of frames to keep alive a track without associated detections.
         'min_hits': 2,                  # Minimum number of associated detections for tracker to be reported as output.
         'iou_threshold': 0.3,           # Minimum IOU for match.
-        'max_iou_for_new_target': 1,  # Maximum IOU to other tracks for detection to be considered a new track
+        'max_iou_for_new_target': 1,    # Maximum IOU to other tracks for detection to be considered a new track
         'hits_to_be_confirmed': 3
     }
     dcf_config = {
@@ -405,6 +394,8 @@ if __name__ == '__main__':
         sys.exit()
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
+    with open(join(args.output_dir, name, 'args.json'), 'w') as args_file:
+        json.dump({'args': vars(args), 'tracker_config': tracker_config, 'dcf_config': dcf_config}, args_file, indent=4)
     seqnames = os.listdir(join(args.seq_path, phase))
 
     for seq in seqnames:

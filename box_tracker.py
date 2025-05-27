@@ -195,17 +195,17 @@ class DCF():
             ymin = ymin - y_offset
             ymax = ymax + y_offset
 
-            x_pad = int(width * self.search_region_scale)
-            y_pad = int(height * self.search_region_scale)
-            # to HWC
-            features = features.transpose(1, 2, 0)
-            features = cv2.copyMakeBorder(features, y_pad, y_pad, x_pad, x_pad, cv2.BORDER_REFLECT)
-            xmin += x_pad
-            xmax += x_pad
-            ymin += y_pad
-            ymax += y_pad
-            # to CHW
-            features = features.transpose(2, 0, 1)
+        x_pad = int(width * self.search_region_scale)
+        y_pad = int(height * self.search_region_scale)
+        # to HWC
+        features = features.transpose(1, 2, 0)
+        features = cv2.copyMakeBorder(features, y_pad, y_pad, x_pad, x_pad, cv2.BORDER_REFLECT)
+        xmin += x_pad
+        xmax += x_pad
+        ymin += y_pad
+        ymax += y_pad
+        # to CHW
+        features = features.transpose(2, 0, 1)
 
         box = np.array([[xmin, ymin, xmax, ymax]]).astype(float)
         # box = [int(el) for el in box]
@@ -240,7 +240,7 @@ class DCF():
         # img = (img - np.mean(img)) / (np.std(img) + 1e-5)
         if self.normalize_features:
             img = img + np.min(img)
-            img = img / np.max(img)
+            img = img / (np.max(img) + 1e-5)
 
         window = window_func_2d(height, width)
         img = img * window

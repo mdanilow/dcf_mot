@@ -36,7 +36,7 @@ from tqdm import tqdm
 from scipy.optimize import linear_sum_assignment
 import json
 
-from utils import draw_bboxes, scale_coords
+from utils import draw_bboxes, scale_coords, draw_frame_info
 from box_tracker import KalmanBoxTracker
 
 np.random.seed(0)
@@ -209,19 +209,14 @@ class Sort(object):
 
         Returns 3 lists of matches, unmatched_detections and unmatched_trackers
         """
-        # print('frame:', self.frame_count)
+        if debug:
+            to_show = draw_frame_info(debug_img, trackers, detections, self.frame_count)
+            print('debug:', to_show.shape)
+            cv2.imshow('debug', to_show)
         if(len(trackers)==0):
             return np.empty((0,2),dtype=int), np.arange(len(detections)), np.empty((0,5),dtype=int)
-
         trackers_bboxes = np.stack([np.squeeze(t.get_state()) for t in trackers])
-        if debug:
-            draw_bboxes(debug_img, trackers_bboxes, color=(255, 0, 0), label_position="under")
-            draw_bboxes(debug_img, detections)
-            cv2.imshow('debug', debug_img)
-        # scaled_trackers_bboxes = scale_coords(debug_img.shape, trackers_bboxes, features.shape[2:])
-        # trackers_bboxes = trackers
         iou_matrix = iou_batch(detections, trackers_bboxes)
-        # trackers_indices_to_match = range(len(trackers))
         detection_indices_to_match = list(range(len(detections)))
 
         matches = np.empty(shape=(0,2), dtype=int)
@@ -292,14 +287,12 @@ class Sort(object):
 
         Returns 3 lists of matches, unmatched_detections and unmatched_trackers
         """
+        if debug:
+            draw_frame_info(debug_img, trackers, detections)
+            cv2.imshow('debug', debug_img)
         if(len(trackers)==0):
             return np.empty((0,2),dtype=int), np.arange(len(detections)), np.empty((0,5),dtype=int)
-
         trackers_bboxes = np.stack([np.squeeze(t.get_state()) for t in trackers])
-        if debug:
-            draw_bboxes(debug_img, trackers_bboxes, color=(255, 0, 0), label_position="under")
-            draw_bboxes(debug_img, detections)
-            cv2.imshow('debug', debug_img)
         # scaled_trackers_bboxes = scale_coords(debug_img.shape, trackers_bboxes, features.shape[2:])
         # trackers_bboxes = trackers
         iou_matrix = iou_batch(detections, trackers_bboxes)
@@ -356,18 +349,12 @@ def parse_args():
     parser = argparse.ArgumentParser(description='SORT demo')
     parser.add_argument("--seq_path", help="Path to detections.", type=str, default='data')
     parser.add_argument("--phase", help="Subdirectory in seq_path.", type=str, default='neweval')
-    # parser.add_argument("--max_age", 
-    #                     help="Maximum number of frames to keep alive a track without associated detections.", 
-    #                     type=int, default=1)
-    # parser.add_argument("--min_hits", 
-    #                     help="Minimum number of associated detections before track is initialised.", 
-    #                     type=int, default=2)
-    # parser.add_argument("--iou_threshold", help="Minimum IOU for match.", type=float, default=0.3)
+    parser.add_argument("--config", help="Path to config file", type=str, default='configs/base_dcf.json')
     parser.add_argument("--output_dir", help="Path to the output dir", type=str, default="output")
     parser.add_argument("--debug_images", help="Path to directory with sequences in mot format for visualization", type=str, default="")
-    parser.add_argument("--use_conv_features", help="Index of detector features to use", type=int, default=None)
     parser.add_argument("--debug", action='store_true')
     parser.add_argument("--name", help="experiment name in output dir", type=str, default="")
+    parser.add_argument("--single_sequence", help="Run only for this sequence", type=str, default=None)
     args = parser.parse_args()
     return args
 
@@ -380,34 +367,23 @@ if __name__ == '__main__':
     name = phase + "_" + args.name if args.name != "" else phase
     output_dir = join(args.output_dir, name, 'data')
     key = None
-    tracker_config = {
-        'strategy': 'cascaded',
-        'max_age': 5,                   # Maximum number of frames to keep alive a track without associated detections.
-        'min_hits': 2,                  # Minimum number of associated detections for tracker to be reported as output.
-        'iou_threshold': 0.3,           # Minimum IOU for match.
-        'max_iou_for_new_target': 1,    # Maximum IOU to other tracks for detection to be considered a new track
-        'hits_to_be_confirmed': 3,
-        'final_iou_assignment': False,
-        'mask_cost_matrix_with_iou': True
-    }
-    dcf_config = {
-        'roi_size': 64,
-        'sigma': 7,
-        'search_region_scale': 1,
-        'crop_mode': "roi_pool",
-        'lambd': 0.01,
-        'lr': 0.025,
-        'normalize_features': True
-    }
+    with open(args.config, "r") as config_file:
+        config = json.load(config_file)
+    tracker_config = config["tracker_config"]
+    dcf_config = config["dcf_config"]
+    use_dcf = dcf_config['use_conv_features'] != -1
 
-    if args.name != "" and os.path.exists(output_dir):
+    if args.name != "" and args.name != "test" and os.path.exists(output_dir):
         print('WARNING: output directory {} already exists, exiting...' )
         sys.exit()
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
     with open(join(args.output_dir, name, 'args.json'), 'w') as args_file:
         json.dump({'args': vars(args), 'tracker_config': tracker_config, 'dcf_config': dcf_config}, args_file, indent=4)
-    seqnames = os.listdir(join(args.seq_path, phase))
+    if args.single_sequence is not None and args.single_sequence != "None":
+        seqnames = [args.single_sequence]
+    else:
+        seqnames = os.listdir(join(args.seq_path, phase))
 
     for seq in seqnames:
         if args.debug_images != "":
@@ -415,7 +391,7 @@ if __name__ == '__main__':
         else:
             img_shape = None
         mot_tracker = Sort(tracker_config=tracker_config,
-                            dcf_config=dcf_config if args.use_conv_features is not None else None,
+                            dcf_config=dcf_config if use_dcf else None,
                             img_shape=img_shape) #create instance of the SORT tracker
         seq_dets = np.loadtxt(join(args.seq_path, phase, seq, 'det', 'det.txt'), delimiter=',')
         seq_features_dir = join(args.seq_path, phase, seq, 'features')
@@ -424,8 +400,8 @@ if __name__ == '__main__':
             print("Processing %s."%(seq), args.debug)
             pbar = tqdm(range(int(seq_dets[:,0].max())))
             for frame in pbar:
-                if args.use_conv_features is not None:
-                    frame_features_path = join(seq_features_dir, 'frame{}_f{}.npy'.format(frame, args.use_conv_features))
+                if use_dcf:
+                    frame_features_path = join(seq_features_dir, 'frame{}_f{}.npy'.format(frame, dcf_config["use_conv_features"]))
                     frame_features = np.load(frame_features_path)
                 else:
                     frame_features = None

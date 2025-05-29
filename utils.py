@@ -4,7 +4,20 @@ import numpy as np
 import cv2
 
 
-def draw_bboxes(img, dets, color=(0, 0, 255), xywh_layout=False, id_to_color=None, id_to_trajectory=None, label_position='over'):
+def draw_text_line(img, text, line=0, color=(0, 0, 0)):
+    x_pos = 10
+    y_pos = 20 + line * 20
+    img = cv2.putText(img,
+                      text,
+                      (x_pos, y_pos),
+                      cv2.FONT_HERSHEY_SIMPLEX,
+                      0.75,
+                      color,
+                      1,
+                      cv2.LINE_AA)
+
+
+def draw_bboxes(img, dets, color=(0, 0, 255), xywh_layout=False, id_to_color=None, id_to_trajectory=None, show_idx=True, label_position='over', info_type=float):
     # gt = dets.shape[-1] == 9
     # color = (0, 0, 255) if gt else (0, 255, 0)
     dets = copy(dets)
@@ -17,9 +30,10 @@ def draw_bboxes(img, dets, color=(0, 0, 255), xywh_layout=False, id_to_color=Non
             det[2:4] = det[2:4] - det[:2]
         xywh = det[:4]
         xywh = [int(x) for x in xywh]
-        # conf = det[6]
-        # cls = det[7]
-        # if cls == 4:
+        if det.shape[0] == 5:
+            info = info_type(det[4])
+        else:
+            info = None
         if id_to_trajectory is not None:
             if obj_id not in id_to_trajectory:
                 id_to_trajectory[obj_id] = []
@@ -32,13 +46,40 @@ def draw_bboxes(img, dets, color=(0, 0, 255), xywh_layout=False, id_to_color=Non
         line_thickness = 1
         # print('HELLO')
         y_pos = xywh[1] - 7 if label_position == "over" else xywh[1] + 14
-        img = cv2.putText(img, 'i: {}'.format(idx),
+        if info is not None:
+            text = 'i: {} fo: {}'.format(idx, info)
+        else:
+            text = 'i: {}'.format(idx)
+        img = cv2.putText(img, text,
                         (xywh[0] + 3, y_pos),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         font_scale,
                         color,
                         line_thickness,
                         cv2.LINE_AA)
+        
+
+def draw_frame_info(img, trackers, detections, frame_number, show_conf=False, show_id=True, show_idx=True, scale=2):
+    if trackers:
+        if show_id:
+            print(np.squeeze(trackers[0].get_state()))
+            trackers_bboxes = np.stack([np.concatenate([np.squeeze(t.get_state()), [int(t.id)]]) for t in trackers])
+        else:
+            trackers_bboxes = np.stack([np.squeeze(t.get_state()) for t in trackers])
+    else:
+        trackers_bboxes = np.empty(shape=(0,4), dtype=int)
+    if not show_conf:
+        detections = np.array([det[:4] for det in detections])
+    trackers_bboxes[:, :4] *= scale
+    detections[:, :4] *= scale
+    # print(img.shape)
+    img = cv2.resize(img, (0, 0), fx=scale, fy=scale)
+    draw_text_line(img, "Tracks", line=0, color=(255, 0, 0))
+    draw_text_line(img, "Detections", line=1, color=(0, 0, 255))
+    draw_text_line(img, "Frame: " + str(frame_number), line=2, color=(0, 255, 0))
+    draw_bboxes(img, trackers_bboxes, color=(255, 0, 0), label_position="under", info_type=int)
+    draw_bboxes(img, detections, color=(0, 0, 255))
+    return img
 
 
 def clip_coords(boxes, img_shape):

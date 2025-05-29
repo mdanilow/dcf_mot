@@ -176,15 +176,16 @@ class Sort(object):
         return np.empty((0,5))
     
 
-    def compute_dcf_cost_matrix(self, scaled_dets, trackers, features, debug):
+    def compute_dcf_cost_matrix(self, scaled_dets, trackers, features, iou_matrix, debug):
         # response_matrix = np.array((len(trackers), detections.shape[0], self.dcf_config['roi_size'], self.dcf_config['roi_size']))
         response_matrix = np.zeros((scaled_dets.shape[0], len(trackers)))
         # response_matrix = np.zeros((len(trackers), len(trackers)))
+        pairs_to_compute = np.where(iou_matrix > 0)
 
         # start = time.time()
-        for tracker_idx, tracker in enumerate(trackers):
-            for detection_idx, detection in enumerate(scaled_dets):
-                dcf_response = tracker.dcf.compute_response(features, detection, debug=debug, debug_idx=detection_idx)
+        for tracker_idx in pairs_to_compute[1]:
+            for detection_idx in pairs_to_compute[0]:
+                dcf_response = trackers[tracker_idx].dcf.compute_response(features, scaled_dets[detection_idx], debug=debug, debug_idx=detection_idx)
                 # print('resp:', np.max(dcf_response), 'selfcorr:', tracker.dcf.selfcorr)
                 max_response = np.max(dcf_response)
                 # if max_response > tracker.dcf.selfcorr:
@@ -231,7 +232,7 @@ class Sort(object):
             else:
                 # cost matrix
                 if self.dcf_config is not None:
-                    cost_matrix = self.compute_dcf_cost_matrix(scaled_dets, trackers, features, debug=debug)
+                    cost_matrix = self.compute_dcf_cost_matrix(scaled_dets, trackers, features, iou_matrix, debug=debug)
                     if self.mask_cost_matrix_with_iou:
                         cost_matrix = np.where(iou_matrix <= self.iou_threshold, 1e+5, cost_matrix)
                 else:
@@ -312,7 +313,7 @@ class Sort(object):
             else:
                 # DCF matrix
                 if self.dcf_config is not None:
-                    cost_matrix = self.compute_dcf_cost_matrix(scaled_dets, trackers, features, debug=debug)
+                    cost_matrix = self.compute_dcf_cost_matrix(scaled_dets, trackers, features, iou_matrix, debug=debug)
                     cost_matrix = np.where(iou_matrix <= self.iou_threshold, 1e+5, cost_matrix)
                 else:
                     cost_matrix = -iou_matrix

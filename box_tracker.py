@@ -80,8 +80,8 @@ class KalmanBoxTracker(object):
         self.hits += 1
         self.hit_streak += 1
         self.kf.update(convert_bbox_to_z(bbox))
-        # if features is not None and features_bbox is not None:
-        #     self.dcf.update_filter(features, features_bbox)
+        if features is not None and features_bbox is not None:
+            self.dcf.update_filter(features, features_bbox)
 
     def predict(self):
         """
@@ -115,12 +115,17 @@ class DCF():
         self.crop_mode = dcf_config['crop_mode']
         self.lambd = dcf_config['lambd']
         self.lr = dcf_config['lr']
+        self.update_strategy = dcf_config['update_strategy']
         self.normalize_features = dcf_config['normalize_features']
         if DCF.G is None:
             DCF.G = np.fft.fft2(self.get_gauss_response(self.roi_size))
 
         self.index = index
         debug = None if (not debug or debug is None) else "init"
+        self.init_filter(features, bbox, debug=debug)
+        # self.selfcorr = np.max(self.compute_response(features, bbox))
+    
+    def init_filter(self, features, bbox, debug=None):
         template = self.crop_search_window(bbox, features, debug=debug)
         fi = self.pre_process(template)
         fftfi = np.fft.fft2(fi)
@@ -128,8 +133,6 @@ class DCF():
         self.Bi = fftfi * np.conjugate(fftfi) + self.lambd
         self.Bi = self.Bi.sum(axis=0)
         self.Hi = self.Ai / self.Bi
-
-        # self.selfcorr = np.max(self.compute_response(features, bbox))
 
     # features in CHW shape
     # bbox in format [x1,y1,x2,y2,score]
@@ -150,13 +153,18 @@ class DCF():
     
 
     def update_filter(self, features, bbox, debug=None):
+        assert self.update_strategy in ["init", "average", "none"]
         debug = None if (not debug or debug is None) else "update"
-        fi = self.crop_search_window(bbox, features, debug=debug)
-        fi = self.pre_process(fi)
-        fftfi = np.fft.fft2(fi)
-        self.Ai = self.lr * (DCF.G * np.conjugate(fftfi)) + (1 - self.lr) * self.Ai
-        self.Bi = self.lr * (np.sum(fftfi * np.conjugate(fftfi) + self.lambd, axis=0)) + (1 - self.lr) * self.Bi
-
+        if self.update_strategy == "init":
+            self.init_filter(features, bbox, debug=debug)
+        elif self.update_strategy == "average":
+            fi = self.crop_search_window(bbox, features, debug=debug)
+            fi = self.pre_process(fi)
+            fftfi = np.fft.fft2(fi)
+            self.Ai = self.lr * (DCF.G * np.conjugate(fftfi)) + (1 - self.lr) * self.Ai
+            self.Bi = self.lr * (np.sum(fftfi * np.conjugate(fftfi) + self.lambd, axis=0)) + (1 - self.lr) * self.Bi
+        elif self.update_strategy == "none":
+            pass
 
     def get_gauss_response(self, size):
 

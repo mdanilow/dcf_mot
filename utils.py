@@ -46,10 +46,11 @@ def draw_bboxes(img, dets, color=(0, 0, 255), xywh_layout=False, id_to_color=Non
         line_thickness = 1
         # print('HELLO')
         y_pos = xywh[1] - 7 if label_position == "over" else xywh[1] + 14
+        text = ""
+        if show_idx:
+            text += 'i: {}'.format(idx)
         if info is not None:
-            text = 'i: {} fo: {}'.format(idx, info)
-        else:
-            text = 'i: {}'.format(idx)
+            text += 'nfo: {}'.format(info)
         img = cv2.putText(img, text,
                         (xywh[0] + 3, y_pos),
                         cv2.FONT_HERSHEY_SIMPLEX,
@@ -62,7 +63,6 @@ def draw_bboxes(img, dets, color=(0, 0, 255), xywh_layout=False, id_to_color=Non
 def draw_frame_info(img, trackers, detections, frame_number, show_conf=False, show_id=True, show_idx=True, scale=2):
     if trackers:
         if show_id:
-            print(np.squeeze(trackers[0].get_state()))
             trackers_bboxes = np.stack([np.concatenate([np.squeeze(t.get_state()), [int(t.id)]]) for t in trackers])
         else:
             trackers_bboxes = np.stack([np.squeeze(t.get_state()) for t in trackers])
@@ -77,8 +77,8 @@ def draw_frame_info(img, trackers, detections, frame_number, show_conf=False, sh
     draw_text_line(img, "Tracks", line=0, color=(255, 0, 0))
     draw_text_line(img, "Detections", line=1, color=(0, 0, 255))
     draw_text_line(img, "Frame: " + str(frame_number), line=2, color=(0, 255, 0))
-    draw_bboxes(img, trackers_bboxes, color=(255, 0, 0), label_position="under", info_type=int)
-    draw_bboxes(img, detections, color=(0, 0, 255))
+    draw_bboxes(img, trackers_bboxes, color=(255, 0, 0), label_position="under", info_type=int, show_idx=False)
+    draw_bboxes(img, detections, color=(0, 0, 255), show_idx=show_idx)
     return img
 
 

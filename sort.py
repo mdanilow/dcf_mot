@@ -180,17 +180,14 @@ class Sort(object):
         # response_matrix = np.array((len(trackers), detections.shape[0], self.dcf_config['roi_size'], self.dcf_config['roi_size']))
         response_matrix = np.zeros((scaled_dets.shape[0], len(trackers)))
         # response_matrix = np.zeros((len(trackers), len(trackers)))
-        pairs_to_compute = np.where(iou_matrix > 0)
+        pairs_to_compute = np.array(np.where(iou_matrix > 0)).transpose()
 
-        # start = time.time()
-        for tracker_idx in pairs_to_compute[1]:
-            for detection_idx in pairs_to_compute[0]:
-                dcf_response = trackers[tracker_idx].dcf.compute_response(features, scaled_dets[detection_idx], debug=debug, debug_idx=detection_idx)
-                # print('resp:', np.max(dcf_response), 'selfcorr:', tracker.dcf.selfcorr)
-                max_response = np.max(dcf_response)
-                # if max_response > tracker.dcf.selfcorr:
-                #     print('Frame {}: track {} correlation with detection {} bigger than self correlation:'.format(self.frame_count, tracker_idx, detection_idx), max_response, tracker.dcf.selfcorr)
-                response_matrix[detection_idx, tracker_idx] = max_response
+        for detection_idx, tracker_idx in pairs_to_compute:
+            dcf_response = trackers[tracker_idx].dcf.compute_response(features, scaled_dets[detection_idx], debug=debug, debug_idx=detection_idx)
+            max_response = np.max(dcf_response)
+            # if max_response > tracker.dcf.selfcorr:
+            #     print('Frame {}: track {} correlation with detection {} bigger than self correlation:'.format(self.frame_count, tracker_idx, detection_idx), max_response, tracker.dcf.selfcorr)
+            response_matrix[detection_idx, tracker_idx] = max_response
 
         local_max_response = np.max(response_matrix)
         if local_max_response > self.max_dcf_response:
@@ -210,8 +207,8 @@ class Sort(object):
         Returns 3 lists of matches, unmatched_detections and unmatched_trackers
         """
         if debug:
-            to_show = draw_frame_info(debug_img, trackers, detections, self.frame_count)
-            cv2.imshow('debug', to_show)
+            debug_img = draw_frame_info(debug_img, trackers, detections, self.frame_count)
+            cv2.imshow('debug', debug_img)
         if(len(trackers)==0):
             return np.empty((0,2),dtype=int), np.arange(len(detections)), np.empty((0,5),dtype=int)
         trackers_bboxes = np.stack([np.squeeze(t.get_state()) for t in trackers])

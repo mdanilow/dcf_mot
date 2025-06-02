@@ -68,11 +68,12 @@ def draw_frame_info(img, trackers, detections, frame_number, show_conf=False, sh
             trackers_bboxes = np.stack([np.squeeze(t.get_state()) for t in trackers])
     else:
         trackers_bboxes = np.empty(shape=(0,4), dtype=int)
-    if not show_conf:
+    if detections.size == 0:
+        detections = np.empty(shape=(0, 4), dtype=int)
+    if not show_conf and detections.size > 0:
         detections = np.array([det[:4] for det in detections])
     trackers_bboxes[:, :4] *= scale
     detections[:, :4] *= scale
-    # print(img.shape)
     img = cv2.resize(img, (0, 0), fx=scale, fy=scale)
     draw_text_line(img, "Tracks", line=0, color=(255, 0, 0))
     draw_text_line(img, "Detections", line=1, color=(0, 0, 255))

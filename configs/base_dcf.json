@@ -1,0 +1,23 @@
+{
+    "tracker_config": {
+        "strategy": "cascaded",
+        "max_age": 5,
+        "min_hits": 2,
+        "iou_threshold": 0.3,
+        "max_iou_for_new_target": 1,
+        "hits_to_be_confirmed": 3,
+        "final_iou_assignment": false,
+        "mask_cost_matrix_with_iou": true
+    },
+    "dcf_config": {
+        "use_conv_features": 0,
+        "update_strategy": "none",
+        "roi_size": 64,
+        "sigma": 7,
+        "search_region_scale": 1,
+        "crop_mode": "roi_pool",
+        "lambd": 0.01,
+        "lr": 0.025,
+        "normalize_features": true
+    }
+}

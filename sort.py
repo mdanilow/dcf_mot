@@ -211,7 +211,6 @@ class Sort(object):
         """
         if debug:
             to_show = draw_frame_info(debug_img, trackers, detections, self.frame_count)
-            print('debug:', to_show.shape)
             cv2.imshow('debug', to_show)
         if(len(trackers)==0):
             return np.empty((0,2),dtype=int), np.arange(len(detections)), np.empty((0,5),dtype=int)

@@ -1,8 +1,8 @@
 {
     "tracker_config": {
-        "strategy": "cascaded",
-        "max_age": 5,
-        "min_hits": 2,
+        "strategy": "iou",
+        "max_age": 1,
+        "min_hits": 3,
         "iou_threshold": 0.3,
         "max_iou_for_new_target": 1,
         "hits_to_be_confirmed": 3,

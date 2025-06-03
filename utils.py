@@ -17,7 +17,7 @@ def draw_text_line(img, text, line=0, color=(0, 0, 0)):
                       cv2.LINE_AA)
 
 
-def draw_bboxes(img, dets, color=(0, 0, 255), xywh_layout=False, id_to_color=None, id_to_trajectory=None, show_idx=True, label_position='over', info_type=float):
+def draw_bboxes(img, dets, color=(0, 0, 255), xywh_layout=False, id_to_color=None, id_to_trajectory=None, label_position='over', info_dict={}):
     # gt = dets.shape[-1] == 9
     # color = (0, 0, 255) if gt else (0, 255, 0)
     dets = copy(dets)
@@ -30,10 +30,7 @@ def draw_bboxes(img, dets, color=(0, 0, 255), xywh_layout=False, id_to_color=Non
             det[2:4] = det[2:4] - det[:2]
         xywh = det[:4]
         xywh = [int(x) for x in xywh]
-        if det.shape[0] == 5:
-            info = info_type(det[4])
-        else:
-            info = None
+
         if id_to_trajectory is not None:
             if obj_id not in id_to_trajectory:
                 id_to_trajectory[obj_id] = []
@@ -41,45 +38,42 @@ def draw_bboxes(img, dets, color=(0, 0, 255), xywh_layout=False, id_to_color=Non
             id_to_trajectory[obj_id].append(center) 
             for point in id_to_trajectory[obj_id]:
                 img = cv2.circle(img, point, radius=1, color=id_to_color[obj_id], thickness=2)
+        
         img = cv2.rectangle(img, (xywh[0], xywh[1]), (xywh[0]+xywh[2], xywh[1]+xywh[3]), id_to_color[obj_id] if id_to_color else color, 1)
         font_scale = 0.5
         line_thickness = 1
-        # print('HELLO')
         y_pos = xywh[1] - 7 if label_position == "over" else xywh[1] + 14
-        text = ""
-        if show_idx:
-            text += 'i: {}'.format(idx)
-        if info is not None:
-            text += 'nfo: {}'.format(info)
-        img = cv2.putText(img, text,
-                        (xywh[0] + 3, y_pos),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        font_scale,
-                        color,
-                        line_thickness,
-                        cv2.LINE_AA)
+        line_height = 17
+        for i, (key, values) in enumerate(info_dict.items()):
+            text = key + ": {}".format(values[idx])
+            img = cv2.putText(img, text,
+                            (xywh[0] + 3, y_pos + line_height * i),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            font_scale,
+                            color,
+                            line_thickness,
+                            cv2.LINE_AA)
         
 
-def draw_frame_info(img, trackers, detections, frame_number, show_conf=False, show_id=True, show_idx=True, scale=2):
-    if trackers:
-        if show_id:
-            trackers_bboxes = np.stack([np.concatenate([np.squeeze(t.get_state()), [int(t.id)]]) for t in trackers])
-        else:
-            trackers_bboxes = np.stack([np.squeeze(t.get_state()) for t in trackers])
-    else:
-        trackers_bboxes = np.empty(shape=(0,4), dtype=int)
+def draw_frame_info(img, trackers, detections, frame_number, show_conf=False, scale=2):
+    trackers_bboxes = np.stack([np.squeeze(t.get_state()) for t in trackers]) if trackers else np.empty(shape=(0,4), dtype=int)
     if detections.size == 0:
         detections = np.empty(shape=(0, 4), dtype=int)
     if not show_conf and detections.size > 0:
         detections = np.array([det[:4] for det in detections])
     trackers_bboxes[:, :4] *= scale
     detections[:, :4] *= scale
+
+    detections_info = {"idx": list(range(detections.shape[0]))}
+    trackers_info = {"id": [t.id for t in trackers],
+                     "age": [t.time_since_update for t in trackers],
+                     "hit_streak": [t.hit_streak for t in trackers]}
     img = cv2.resize(img, (0, 0), fx=scale, fy=scale)
     draw_text_line(img, "Tracks", line=0, color=(255, 0, 0))
     draw_text_line(img, "Detections", line=1, color=(0, 0, 255))
     draw_text_line(img, "Frame: " + str(frame_number), line=2, color=(0, 255, 0))
-    draw_bboxes(img, trackers_bboxes, color=(255, 0, 0), label_position="under", info_type=int, show_idx=False)
-    draw_bboxes(img, detections, color=(0, 0, 255), show_idx=show_idx)
+    draw_bboxes(img, trackers_bboxes, color=(255, 0, 0), label_position="under", info_dict=trackers_info)
+    draw_bboxes(img, detections, color=(0, 0, 255), info_dict=detections_info)
     return img
 
 

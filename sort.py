@@ -121,6 +121,9 @@ class Sort(object):
         # print('update, trackers:', len(self.trackers), 'detections:', dets.shape[0])
         # print(dets)
         self.frame_count += 1
+        if debug:
+            debug_img = draw_frame_info(debug_img, self.trackers, dets, self.frame_count)
+            cv2.imshow('debug', debug_img)
         # get predicted locations from existing trackers.
         trks = np.zeros((len(self.trackers), 5))
         to_del = []
@@ -206,9 +209,9 @@ class Sort(object):
 
         Returns 3 lists of matches, unmatched_detections and unmatched_trackers
         """
-        if debug:
-            debug_img = draw_frame_info(debug_img, trackers, detections, self.frame_count)
-            cv2.imshow('debug', debug_img)
+        # if debug:
+        #     debug_img = draw_frame_info(debug_img, trackers, detections, self.frame_count)
+        #     cv2.imshow('debug', debug_img)
         if(len(trackers)==0):
             return np.empty((0,2),dtype=int), np.arange(len(detections)), np.empty((0,5),dtype=int)
         trackers_bboxes = np.stack([np.squeeze(t.get_state()) for t in trackers])
@@ -283,17 +286,13 @@ class Sort(object):
 
         Returns 3 lists of matches, unmatched_detections and unmatched_trackers
         """
-        if debug:
-            draw_frame_info(debug_img, trackers, detections)
-            cv2.imshow('debug', debug_img)
+        # if debug:
+        #     debug_img = draw_frame_info(debug_img, trackers, detections, self.frame_count)
+        #     cv2.imshow('debug', debug_img)
         if(len(trackers)==0):
             return np.empty((0,2),dtype=int), np.arange(len(detections)), np.empty((0,5),dtype=int)
         trackers_bboxes = np.stack([np.squeeze(t.get_state()) for t in trackers])
-        # scaled_trackers_bboxes = scale_coords(debug_img.shape, trackers_bboxes, features.shape[2:])
-        # trackers_bboxes = trackers
         iou_matrix = iou_batch(detections, trackers_bboxes)
-        # print('iou matrix:', iou_matrix.shape)
-        # print(iou_matrix)
 
         if min(iou_matrix.shape) > 0:
             a = (iou_matrix > self.iou_threshold).astype(np.int32)
@@ -382,6 +381,7 @@ if __name__ == '__main__':
         seqnames = os.listdir(join(args.seq_path, phase))
 
     for seq in seqnames:
+        print("Processing %s."%(seq))
         if args.debug_images != "":
             img_shape = cv2.imread(join(args.debug_images, seq, 'img1', '%06d.jpg'%(1))).shape
         else:
@@ -393,7 +393,6 @@ if __name__ == '__main__':
         seq_features_dir = join(args.seq_path, phase, seq, 'features')
 
         with open(os.path.join(output_dir, '%s.txt'%(seq)),'w') as out_file:
-            print("Processing %s."%(seq), args.debug)
             pbar = tqdm(range(int(seq_dets[:,0].max())))
             for frame in pbar:
                 if use_dcf:

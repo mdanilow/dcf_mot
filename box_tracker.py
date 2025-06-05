@@ -4,7 +4,7 @@ from filterpy.kalman import KalmanFilter
 import torch
 from torchvision.ops import roi_pool, roi_align
 
-from utils import draw_bboxes
+from utils import draw_bboxes, scale_coords
 
 
 def convert_bbox_to_z(bbox):
@@ -22,7 +22,7 @@ def convert_bbox_to_z(bbox):
     return np.array([x, y, s, r]).reshape((4, 1))
 
 
-def convert_x_to_bbox(x,score=None):
+def convert_x_to_bbox(x, score=None):
     """
     Takes a bounding box in the centre form [x,y,s,r] and returns it in the form
         [x1,y1,x2,y2] where x1,y1 is the top left and x2,y2 is the bottom right
@@ -40,7 +40,7 @@ class KalmanBoxTracker(object):
     This class represents the internal state of individual tracked objects observed as bbox.
     """
     count = 0
-    def __init__(self, bbox, hits_to_be_confirmed=3, dcf_config=None, features=None, features_bbox=None, debug=None, index=None):
+    def __init__(self, bbox, hits_to_be_confirmed=3, dcf_config=None, img_shape=None, features=None, features_bbox=None, debug=None, index=None):
         """
         Initialises a tracker using initial bounding box.
         """
@@ -64,9 +64,10 @@ class KalmanBoxTracker(object):
         self.hit_streak = 0
         self.age = 0
         self.hits_to_be_confirmed =  hits_to_be_confirmed
+        self.dcf_config = dcf_config
 
         if dcf_config is not None and features is not None and features_bbox is not None:
-            self.dcf = DCF(dcf_config, features, features_bbox, debug=debug, index=index)
+            self.dcf = DCF(dcf_config, img_shape, features, features_bbox, debug=debug, index=index)
 
     def is_confirmed(self):
         return self.hits >= self.hits_to_be_confirmed
@@ -83,18 +84,22 @@ class KalmanBoxTracker(object):
         if features is not None and features_bbox is not None:
             self.dcf.update_filter(features, features_bbox)
 
-    def predict(self):
+    def predict(self, features=None, debug=None):
         """
         Advances the state vector and returns the predicted bounding box estimate.
         """
-        if((self.kf.x[6]+self.kf.x[2])<=0):
-            self.kf.x[6] *= 0.0
-        self.kf.predict()
+        if features is not None and self.dcf_config and self.dcf_config['predict_position']:
+            predicted_pos = self.dcf.predict_displacement(features, self.get_state(), debug=debug)
+        else:
+            if((self.kf.x[6]+self.kf.x[2])<=0):
+                self.kf.x[6] *= 0.0
+            self.kf.predict()
+            self.history.append(convert_x_to_bbox(self.kf.x))
+
         self.age += 1
         if(self.time_since_update>0):
             self.hit_streak = 0
         self.time_since_update += 1
-        self.history.append(convert_x_to_bbox(self.kf.x))
         return self.history[-1]
 
     def get_state(self):
@@ -108,7 +113,8 @@ class DCF():
 
     G = None
 
-    def __init__(self, dcf_config, features, bbox, debug=None, index=None):
+    def __init__(self, dcf_config, img_shape, features, bbox, debug=None, index=None):
+        self.img_shape = img_shape
         self.roi_size = dcf_config['roi_size']
         self.sigma = dcf_config['sigma']
         self.search_region_scale = dcf_config['search_region_scale']
@@ -147,9 +153,25 @@ class DCF():
         # print('compte response debug:', debug)
         if debug is not None:
             debug_idx = "" if debug_idx is None else str(debug_idx)
-            cv2.imshow('response ' + debug_idx, gi)
+            cv2.imshow('response {}'.format(debug), gi)
 
         return gi
+    
+
+    def predict_displacement(self, features, bbox, debug=None):
+        features_bbox = scale_coords(self.img_shape, bbox, features.shape[2:])
+        response = self.compute_response(features, features_bbox, debug=debug)
+        max_value = np.max(response)
+        max_pos = np.where(response == max_value)
+        dx = np.mean(max_pos[1]) - response.shape[1] / 2
+        dy = np.mean(max_pos[0]) - response.shape[0] / 2
+        # scale from roi dimension to features dimension
+        dx /= self.x_scale
+        dy /= self.y_scale
+        # scale from features dimension to image dimension
+        displacement = scale_coords(features.shape[2:], np.array([[dx, dy, 0, 0]]), self.img_shape)[:2]
+
+        return displacement
     
 
     def update_filter(self, features, bbox, debug=None):
@@ -202,6 +224,10 @@ class DCF():
             xmax = xmax + x_offset
             ymin = ymin - y_offset
             ymax = ymax + y_offset
+        
+        # scaling between features dimension and roi dimension - to calculate displacement later
+        self.x_scale = self.roi_size / xmax - xmin
+        self.y_scale = self.roi_size / ymax - xmin
 
         x_pad = int(width * self.search_region_scale)
         y_pad = int(height * self.search_region_scale)
@@ -235,8 +261,8 @@ class DCF():
             test = np.stack([test] * 3, axis=2)
             draw_bboxes(test, np.array([[xmin, ymin, xmax, ymax]]))
             debug_idx = "" if debug_idx is None else str(debug_idx)
-            cv2.imshow('{} features {}'.format(debug, debug_idx), test)
-            cv2.imshow(debug + ' roi ' + debug_idx, window.transpose(1, 2, 0)[:, :, i])
+            cv2.imshow('features {}'.format(debug), test)
+            cv2.imshow('features window {}'.format(debug), window.transpose(1, 2, 0)[:, :, i])
 
         return window
 

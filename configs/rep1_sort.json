@@ -8,7 +8,7 @@
         "hits_to_be_confirmed": 3,
         "final_iou_assignment": false,
         "mask_cost_matrix_with_iou": true,
-        "max_report_age": 0
+        "max_report_age": 1
     },
     "dcf_config": {
         "use_conv_features": -1,

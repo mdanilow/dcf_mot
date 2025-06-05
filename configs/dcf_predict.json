@@ -8,16 +8,18 @@
         "hits_to_be_confirmed": 3,
         "final_iou_assignment": false,
         "mask_cost_matrix_with_iou": true,
-        "max_report_age": 0
+        "max_report_age": 1
     },
     "dcf_config": {
-        "use_conv_features": -1,
+        "use_conv_features": 0,
+        "update_strategy": "none",
         "roi_size": 64,
         "sigma": 7,
         "search_region_scale": 1,
         "crop_mode": "roi_pool",
         "lambd": 0.01,
         "lr": 0.025,
-        "normalize_features": true
+        "normalize_features": true,
+        "predict_position": true
     }
 }

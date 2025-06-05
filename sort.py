@@ -102,6 +102,7 @@ class Sort(object):
         self.association_strategy = association_fn_lookup[tracker_config['strategy']]
         self.final_iou_assignment = tracker_config['final_iou_assignment']
         self.mask_cost_matrix_with_iou = tracker_config['mask_cost_matrix_with_iou']
+        self.max_report_age = tracker_config['max_report_age']
 
         self.dcf_config = dcf_config
         self.trackers = []
@@ -118,24 +119,13 @@ class Sort(object):
 
         NOTE: The number of objects returned may differ from the number of detections provided.
         """
-        # print('update, trackers:', len(self.trackers), 'detections:', dets.shape[0])
-        # print(dets)
+        ret = []
         self.frame_count += 1
         if debug:
             debug_img = draw_frame_info(debug_img, self.trackers, dets, self.frame_count)
             cv2.imshow('debug', debug_img)
-        # get predicted locations from existing trackers.
-        trks = np.zeros((len(self.trackers), 5))
-        to_del = []
-        ret = []
-        for t, trk in enumerate(trks):
-            pos = self.trackers[t].predict()[0]
-            trk[:] = [pos[0], pos[1], pos[2], pos[3], 0]
-            if np.any(np.isnan(pos)):
-                to_del.append(t)
-        trks = np.ma.compress_rows(np.ma.masked_invalid(trks))
-        for t in reversed(to_del):
-            self.trackers.pop(t)
+
+        self.local_prediction(features)
 
         if self.dcf_config is not None:
             scaled_dets = scale_coords(self.img_shape, dets, features.shape[2:])
@@ -160,15 +150,16 @@ class Sort(object):
             trk = KalmanBoxTracker(dets[i, :],
                                    self.hits_to_be_confirmed,
                                    self.dcf_config,
+                                   self.img_shape,
                                    features,
                                    None if scaled_dets is None else scaled_dets[i, :],
-                                   debug=debug,
+                                   debug="init_from_det{}".format(i) if debug else None,
                                    index=len(self.trackers))
             self.trackers.append(trk)
         i = len(self.trackers)
         for trk in reversed(self.trackers):
             d = trk.get_state()[0]
-            if (trk.time_since_update < 1) and (trk.hit_streak >= self.min_hits or self.frame_count <= self.min_hits):
+            if (trk.time_since_update <= self.max_report_age) and (trk.hit_streak >= self.min_hits or self.frame_count <= self.min_hits):
                 ret.append(np.concatenate((d,[trk.id+1])).reshape(1,-1)) # +1 as MOT benchmark requires positive
             i -= 1
             # remove dead tracklet
@@ -179,6 +170,16 @@ class Sort(object):
         return np.empty((0,5))
     
 
+    def local_prediction(self, features=None):
+        to_del = []
+        for t, trk in enumerate(self.trackers):
+            pos = self.trackers[t].predict(features, debug="predict_id{}".format(trk.id))[0]
+            if np.any(np.isnan(pos)):
+                to_del.append(t)
+        for t in reversed(to_del):
+            self.trackers.pop(t)
+
+    
     def compute_dcf_cost_matrix(self, scaled_dets, trackers, features, iou_matrix, debug):
         # response_matrix = np.array((len(trackers), detections.shape[0], self.dcf_config['roi_size'], self.dcf_config['roi_size']))
         response_matrix = np.zeros((scaled_dets.shape[0], len(trackers)))
@@ -186,7 +187,10 @@ class Sort(object):
         pairs_to_compute = np.array(np.where(iou_matrix > 0)).transpose()
 
         for detection_idx, tracker_idx in pairs_to_compute:
-            dcf_response = trackers[tracker_idx].dcf.compute_response(features, scaled_dets[detection_idx], debug=debug, debug_idx=detection_idx)
+            dcf_response = trackers[tracker_idx].dcf.compute_response(features,
+                                                                      scaled_dets[detection_idx],
+                                                                      debug="det{}_trkid{}".format(detection_idx, trackers[tracker_idx].id) if debug else None,
+                                                                      debug_idx=detection_idx)
             max_response = np.max(dcf_response)
             # if max_response > tracker.dcf.selfcorr:
             #     print('Frame {}: track {} correlation with detection {} bigger than self correlation:'.format(self.frame_count, tracker_idx, detection_idx), max_response, tracker.dcf.selfcorr)

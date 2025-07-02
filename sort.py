@@ -153,12 +153,11 @@ class Sort(object):
                                    self.img_shape,
                                    features,
                                    None if scaled_dets is None else scaled_dets[i, :],
-                                   debug="init_from_det{}".format(i) if debug else None,
-                                   index=len(self.trackers))
+                                   debug="init_from_det{}".format(i) if debug else None)
             self.trackers.append(trk)
         i = len(self.trackers)
         for trk in reversed(self.trackers):
-            d = trk.get_state()[0]
+            d = trk.get_state()
             if (trk.time_since_update <= self.max_report_age) and (trk.hit_streak >= self.min_hits or self.frame_count <= self.min_hits):
                 ret.append(np.concatenate((d,[trk.id+1])).reshape(1,-1)) # +1 as MOT benchmark requires positive
             i -= 1
@@ -173,7 +172,7 @@ class Sort(object):
     def local_prediction(self, features=None):
         to_del = []
         for t, trk in enumerate(self.trackers):
-            pos = self.trackers[t].predict(features, debug="predict_id{}".format(trk.id))[0]
+            pos = self.trackers[t].predict(features, debug="predict_trkid{}".format(trk.id))[0]
             if np.any(np.isnan(pos)):
                 to_del.append(t)
         for t in reversed(to_del):
@@ -189,8 +188,7 @@ class Sort(object):
         for detection_idx, tracker_idx in pairs_to_compute:
             dcf_response = trackers[tracker_idx].dcf.compute_response(features,
                                                                       scaled_dets[detection_idx],
-                                                                      debug="det{}_trkid{}".format(detection_idx, trackers[tracker_idx].id) if debug else None,
-                                                                      debug_idx=detection_idx)
+                                                                      debug="det{}_trkid{}".format(detection_idx, trackers[tracker_idx].id) if debug else None)
             max_response = np.max(dcf_response)
             # if max_response > tracker.dcf.selfcorr:
             #     print('Frame {}: track {} correlation with detection {} bigger than self correlation:'.format(self.frame_count, tracker_idx, detection_idx), max_response, tracker.dcf.selfcorr)

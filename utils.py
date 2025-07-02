@@ -42,8 +42,8 @@ def draw_bboxes(img, dets, color=(0, 0, 255), xywh_layout=False, id_to_color=Non
         img = cv2.rectangle(img, (xywh[0], xywh[1]), (xywh[0]+xywh[2], xywh[1]+xywh[3]), id_to_color[obj_id] if id_to_color else color, 1)
         font_scale = 0.5
         line_thickness = 1
-        y_pos = xywh[1] - 7 if label_position == "over" else xywh[1] + 14
         line_height = 17
+        y_pos = xywh[1] - line_height * len(info_dict.keys()) - 7 if label_position == "over" else xywh[1] + 14
         for i, (key, values) in enumerate(info_dict.items()):
             text = key + ": {}".format(values[idx])
             img = cv2.putText(img, text,
@@ -55,19 +55,21 @@ def draw_bboxes(img, dets, color=(0, 0, 255), xywh_layout=False, id_to_color=Non
                             cv2.LINE_AA)
         
 
-def draw_frame_info(img, trackers, detections, frame_number, show_conf=False, scale=2):
+def draw_frame_info(img, trackers, detections, frame_number, scale=2):
     trackers_bboxes = np.stack([np.squeeze(t.get_state()) for t in trackers]) if trackers else np.empty(shape=(0,4), dtype=int)
+    detections = detections.copy()
     if detections.size == 0:
         detections = np.empty(shape=(0, 4), dtype=int)
-    if not show_conf and detections.size > 0:
-        detections = np.array([det[:4] for det in detections])
+    # if not show_conf and detections.size > 0:
+    #     detections = np.array([det[:4] for det in detections])
     trackers_bboxes[:, :4] *= scale
     detections[:, :4] *= scale
 
-    detections_info = {"idx": list(range(detections.shape[0]))}
+    detections_info = {"idx": list(range(detections.shape[0])),
+                       "conf": ["{:.2f}".format(d) for d in detections[:, 4]]}
     trackers_info = {"id": [t.id for t in trackers],
                      "age": [t.time_since_update for t in trackers],
-                     "hit_streak": [t.hit_streak for t in trackers]}
+                     "hit_str": [t.hit_streak for t in trackers]}
     img = cv2.resize(img, (0, 0), fx=scale, fy=scale)
     draw_text_line(img, "Tracks", line=0, color=(255, 0, 0))
     draw_text_line(img, "Detections", line=1, color=(0, 0, 255))

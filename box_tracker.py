@@ -30,9 +30,9 @@ def convert_x_to_bbox(x, score=None):
     w = np.sqrt(x[2] * x[3])
     h = x[2] / w
     if(score==None):
-        return np.array([x[0]-w/2.,x[1]-h/2.,x[0]+w/2.,x[1]+h/2.]).reshape((1,4))
+        return np.array([x[0]-w/2.,x[1]-h/2.,x[0]+w/2.,x[1]+h/2.]).reshape((4,))
     else:
-        return np.array([x[0]-w/2.,x[1]-h/2.,x[0]+w/2.,x[1]+h/2.,score]).reshape((1,5))
+        return np.array([x[0]-w/2.,x[1]-h/2.,x[0]+w/2.,x[1]+h/2.,score]).reshape((5,))
 
 
 class KalmanBoxTracker(object):
@@ -40,7 +40,7 @@ class KalmanBoxTracker(object):
     This class represents the internal state of individual tracked objects observed as bbox.
     """
     count = 0
-    def __init__(self, bbox, hits_to_be_confirmed=3, dcf_config=None, img_shape=None, features=None, features_bbox=None, debug=None, index=None):
+    def __init__(self, bbox, hits_to_be_confirmed=3, dcf_config=None, img_shape=None, features=None, features_bbox=None, debug=None):
         """
         Initialises a tracker using initial bounding box.
         """
@@ -67,7 +67,7 @@ class KalmanBoxTracker(object):
         self.dcf_config = dcf_config
 
         if dcf_config is not None and features is not None and features_bbox is not None:
-            self.dcf = DCF(dcf_config, img_shape, features, features_bbox, debug=debug, index=index)
+            self.dcf = DCF(dcf_config, img_shape, features, features_bbox, debug=debug)
 
     def is_confirmed(self):
         return self.hits >= self.hits_to_be_confirmed
@@ -80,7 +80,8 @@ class KalmanBoxTracker(object):
         self.history = []
         self.hits += 1
         self.hit_streak += 1
-        self.kf.update(convert_bbox_to_z(bbox))
+        if not self.dcf_config['predict_position']:
+            self.kf.update(convert_bbox_to_z(bbox))
         if features is not None and features_bbox is not None:
             self.dcf.update_filter(features, features_bbox)
 
@@ -89,13 +90,16 @@ class KalmanBoxTracker(object):
         Advances the state vector and returns the predicted bounding box estimate.
         """
         if features is not None and self.dcf_config and self.dcf_config['predict_position']:
-            predicted_pos = self.dcf.predict_displacement(features, self.get_state(), debug=debug)
+            # print(debug, "pre state:", self.kf.x)
+            predicted_displacement = self.dcf.predict_displacement(features, self.get_state(), debug=debug)
+            self.kf.x[:4] = convert_bbox_to_z(self.get_state() + predicted_displacement)
+            # print("disp:", predicted_displacement, "modified state:", self.kf.x)
         else:
             if((self.kf.x[6]+self.kf.x[2])<=0):
                 self.kf.x[6] *= 0.0
             self.kf.predict()
-            self.history.append(convert_x_to_bbox(self.kf.x))
-
+            
+        self.history.append(convert_x_to_bbox(self.kf.x))
         self.age += 1
         if(self.time_since_update>0):
             self.hit_streak = 0
@@ -113,7 +117,7 @@ class DCF():
 
     G = None
 
-    def __init__(self, dcf_config, img_shape, features, bbox, debug=None, index=None):
+    def __init__(self, dcf_config, img_shape, features, bbox, debug=None):
         self.img_shape = img_shape
         self.roi_size = dcf_config['roi_size']
         self.sigma = dcf_config['sigma']
@@ -126,8 +130,6 @@ class DCF():
         if DCF.G is None:
             DCF.G = np.fft.fft2(self.get_gauss_response(self.roi_size))
 
-        self.index = index
-        debug = None if (not debug or debug is None) else "init"
         self.init_filter(features, bbox, debug=debug)
         # self.selfcorr = np.max(self.compute_response(features, bbox))
     
@@ -142,9 +144,8 @@ class DCF():
 
     # features in CHW shape
     # bbox in format [x1,y1,x2,y2,score]
-    def compute_response(self, features, bbox, debug=None, debug_idx=None):
-        debug = None if (not debug or debug is None) else "predict"
-        fi = self.crop_search_window(bbox, features, debug=debug, debug_idx=debug_idx)
+    def compute_response(self, features, bbox, debug=None):
+        fi = self.crop_search_window(bbox, features, debug=debug)
         fi = self.pre_process(fi)
         fftfi = np.fft.fft2(fi)
         Gi = self.Hi * fftfi
@@ -152,31 +153,36 @@ class DCF():
         gi = np.real(np.fft.ifft2(Gi))
         # print('compte response debug:', debug)
         if debug is not None:
-            debug_idx = "" if debug_idx is None else str(debug_idx)
             cv2.imshow('response {}'.format(debug), gi)
 
         return gi
     
 
     def predict_displacement(self, features, bbox, debug=None):
-        features_bbox = scale_coords(self.img_shape, bbox, features.shape[2:])
-        response = self.compute_response(features, features_bbox, debug=debug)
+        features_bbox = scale_coords(self.img_shape, np.expand_dims(bbox, axis=0), features.shape[2:])
+        response = self.compute_response(features, features_bbox[0], debug=None)
         max_value = np.max(response)
         max_pos = np.where(response == max_value)
-        dx = np.mean(max_pos[1]) - response.shape[1] / 2
-        dy = np.mean(max_pos[0]) - response.shape[0] / 2
+        max_pos = (int(np.mean(max_pos[1])), int(np.mean(max_pos[0])))
+        dx = max_pos[0] - response.shape[1] / 2
+        dy = max_pos[1] - response.shape[0] / 2
         # scale from roi dimension to features dimension
         dx /= self.x_scale
         dy /= self.y_scale
         # scale from features dimension to image dimension
-        displacement = scale_coords(features.shape[2:], np.array([[dx, dy, 0, 0]]), self.img_shape)[:2]
+        displacement = scale_coords(features.shape[2:], np.array([[dx, dy, dx, dy]]), self.img_shape)[0]
+
+        if debug is not None:
+            debug_response = ((response - np.min(response)) / (np.max(response) - np.min(response))) * 255
+            debug_response = np.stack([debug_response] * 3, axis=2).astype(np.uint8)
+            debug_response = cv2.circle(debug_response.copy(), max_pos, 3, (0, 0, 255), -1)
+            cv2.imshow('response {}'.format(debug), debug_response)
 
         return displacement
     
 
     def update_filter(self, features, bbox, debug=None):
         assert self.update_strategy in ["init", "average", "none"]
-        debug = None if (not debug or debug is None) else "update"
         if self.update_strategy == "init":
             self.init_filter(features, bbox, debug=debug)
         elif self.update_strategy == "average":
@@ -209,8 +215,7 @@ class DCF():
     
     # features in CHW shape
     # bbox in format [x1,y1,x2,y2,score]
-    def crop_search_window(self, bbox, features, debug=None, debug_idx=None):
-
+    def crop_search_window(self, bbox, features, debug=None):
         if len(features.shape) == 4:
             features = features[0]
         xmin, ymin, xmax, ymax = bbox[:4]
@@ -226,8 +231,8 @@ class DCF():
             ymax = ymax + y_offset
         
         # scaling between features dimension and roi dimension - to calculate displacement later
-        self.x_scale = self.roi_size / xmax - xmin
-        self.y_scale = self.roi_size / ymax - xmin
+        self.x_scale = self.roi_size / (xmax - xmin)
+        self.y_scale = self.roi_size / (ymax - xmin)
 
         x_pad = int(width * self.search_region_scale)
         y_pad = int(height * self.search_region_scale)
@@ -255,12 +260,11 @@ class DCF():
 
         if debug is not None:
             i = 14
-            ch = features[14]
+            ch = features[i]
             # for i, ch in enumerate(features):
             test = ((ch - np.min(ch)) / (np.max(ch) - np.min(ch))) * 255
             test = np.stack([test] * 3, axis=2)
             draw_bboxes(test, np.array([[xmin, ymin, xmax, ymax]]))
-            debug_idx = "" if debug_idx is None else str(debug_idx)
             cv2.imshow('features {}'.format(debug), test)
             cv2.imshow('features window {}'.format(debug), window.transpose(1, 2, 0)[:, :, i])
 

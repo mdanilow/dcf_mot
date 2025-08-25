@@ -4,7 +4,7 @@ from filterpy.kalman import KalmanFilter
 import torch
 from torchvision.ops import roi_pool, roi_align
 
-from utils import draw_bboxes, scale_coords
+from utils import draw_bboxes, scale_coords, draw_text_line
 
 
 def convert_bbox_to_z(bbox):
@@ -113,6 +113,24 @@ class KalmanBoxTracker(object):
         return convert_x_to_bbox(self.kf.x)
     
 
+# peak_pos in (x, y) format
+def compute_psr(x, peak_pos, peak_size):
+    mask = np.zeros(x.shape)
+    crop_left = np.clip(peak_pos[0] - peak_size // 2, 0, x.shape[1] - 1)
+    crop_right = np.clip(peak_pos[0] + peak_size // 2, 0, x.shape[1] - 1)
+    crop_top = np.clip(peak_pos[1] - peak_size // 2, 0, x.shape[0] - 1)
+    crop_bottom = np.clip(peak_pos[1] + peak_size // 2, 0, x.shape[0] - 1)
+    mask[crop_top : crop_bottom + 1, crop_left : crop_right + 1] = 1
+
+    sidelobe = np.ma.array(x, mask=mask)
+    sidelobe_mean = sidelobe.mean()
+    sidelobe_std = sidelobe.std()
+    peak = x[peak_pos[1], peak_pos[0]]
+    psr = (peak - sidelobe_mean) / sidelobe_std
+
+    return psr
+    
+
 class DCF():
 
     G = None
@@ -127,10 +145,12 @@ class DCF():
         self.lr = dcf_config['lr']
         self.update_strategy = dcf_config['update_strategy']
         self.normalize_features = dcf_config['normalize_features']
+        self.psr_peak_crop_size = dcf_config['psr_peak_crop_size']
         if DCF.G is None:
             DCF.G = np.fft.fft2(self.get_gauss_response(self.roi_size))
 
         self.init_filter(features, bbox, debug=debug)
+        self.psr = -1
         # self.selfcorr = np.max(self.compute_response(features, bbox))
     
     def init_filter(self, features, bbox, debug=None):
@@ -164,6 +184,10 @@ class DCF():
         max_value = np.max(response)
         max_pos = np.where(response == max_value)
         max_pos = (int(np.mean(max_pos[1])), int(np.mean(max_pos[0])))
+
+        # compute peak-to-sidelobe ratio (psr)
+        self.psr = compute_psr(response, max_pos, self.psr_peak_crop_size)
+
         dx = max_pos[0] - response.shape[1] / 2
         dy = max_pos[1] - response.shape[0] / 2
         # scale from roi dimension to features dimension
@@ -175,7 +199,8 @@ class DCF():
         if debug is not None:
             debug_response = ((response - np.min(response)) / (np.max(response) - np.min(response))) * 255
             debug_response = np.stack([debug_response] * 3, axis=2).astype(np.uint8)
-            debug_response = cv2.circle(debug_response.copy(), max_pos, 3, (0, 0, 255), -1)
+            debug_response = cv2.circle(debug_response.copy(), max_pos, 2, (0, 0, 255), -1)
+            draw_text_line(debug_response, "psr: " + "{:.1f}".format(self.psr), offset=(2, 10), color=(0, 255, 0), font_scale=0.25)
             cv2.imshow('response {}'.format(debug), debug_response)
 
         return displacement
@@ -259,14 +284,13 @@ class DCF():
             window = cv2.resize(window, (self.roi_size, self.roi_size))
 
         if debug is not None:
-            i = 14
-            ch = features[i]
-            # for i, ch in enumerate(features):
-            test = ((ch - np.min(ch)) / (np.max(ch) - np.min(ch))) * 255
-            test = np.stack([test] * 3, axis=2)
-            draw_bboxes(test, np.array([[xmin, ymin, xmax, ymax]]))
-            cv2.imshow('features {}'.format(debug), test)
-            cv2.imshow('features window {}'.format(debug), window.transpose(1, 2, 0)[:, :, i])
+            for i in range(14, 15):
+                ch = features[i]
+                test = ((ch - np.min(ch)) / (np.max(ch) - np.min(ch))) * 255
+                test = np.stack([test] * 3, axis=2)
+                draw_bboxes(test, np.array([[xmin, ymin, xmax, ymax]]))
+                cv2.imshow('features{} {}'.format(i, debug), test)
+                cv2.imshow('features{} window {}'.format(i, debug), window.transpose(1, 2, 0)[:, :, i])
 
         return window
 

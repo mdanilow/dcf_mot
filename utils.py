@@ -4,14 +4,14 @@ import numpy as np
 import cv2
 
 
-def draw_text_line(img, text, line=0, color=(0, 0, 0)):
-    x_pos = 10
-    y_pos = 20 + line * 20
+def draw_text_line(img, text, line=0, offset=(10, 20), color=(0, 0, 0), font_scale=0.75):
+    x_pos = offset[0]
+    y_pos = offset[1] + line * 20
     img = cv2.putText(img,
                       text,
                       (x_pos, y_pos),
                       cv2.FONT_HERSHEY_SIMPLEX,
-                      0.75,
+                      font_scale,
                       color,
                       1,
                       cv2.LINE_AA)
@@ -43,7 +43,7 @@ def draw_bboxes(img, dets, color=(0, 0, 255), xywh_layout=False, id_to_color=Non
         font_scale = 0.5
         line_thickness = 1
         line_height = 17
-        y_pos = xywh[1] - line_height * len(info_dict.keys()) - 7 if label_position == "over" else xywh[1] + 14
+        y_pos = xywh[1] - line_height * len(info_dict.keys()) if label_position == "over" else xywh[1] + 14
         for i, (key, values) in enumerate(info_dict.items()):
             text = key + ": {}".format(values[idx])
             img = cv2.putText(img, text,
@@ -69,7 +69,8 @@ def draw_frame_info(img, trackers, detections, frame_number, scale=2):
                        "conf": ["{:.2f}".format(d) for d in detections[:, 4]]}
     trackers_info = {"id": [t.id for t in trackers],
                      "age": [t.time_since_update for t in trackers],
-                     "hit_str": [t.hit_streak for t in trackers]}
+                     "hit_str": [t.hit_streak for t in trackers],
+                     "psr": ["{:.1f}".format(t.dcf.psr) for t in trackers]}
     img = cv2.resize(img, (0, 0), fx=scale, fy=scale)
     draw_text_line(img, "Tracks", line=0, color=(255, 0, 0))
     draw_text_line(img, "Detections", line=1, color=(0, 0, 255))

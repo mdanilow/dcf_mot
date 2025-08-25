@@ -110,6 +110,9 @@ class Sort(object):
         self.img_shape = img_shape
         self.max_dcf_response = 0
 
+        self.debug_history_itstart = []
+        self.debug_history_locpred = []
+
     def update(self, dets=np.empty((0, 5)), features=None, debug_img=None, debug=None):
         """
         Params:
@@ -122,10 +125,16 @@ class Sort(object):
         ret = []
         self.frame_count += 1
         if debug:
-            debug_img = draw_frame_info(debug_img, self.trackers, dets, self.frame_count)
-            cv2.imshow('debug', debug_img)
+            vis_img = draw_frame_info(debug_img, self.trackers, dets, self.frame_count)
+            self.debug_history_itstart.append(vis_img)
+            cv2.imshow('debug, iteration start', vis_img)
 
         self.local_prediction(features)
+
+        if debug:
+            vis_img = draw_frame_info(debug_img, self.trackers, dets, self.frame_count)
+            self.debug_history_locpred.append(vis_img)
+            cv2.imshow('debug, local prediction', vis_img)
 
         if self.dcf_config is not None:
             scaled_dets = scale_coords(self.img_shape, dets, features.shape[2:])

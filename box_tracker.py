@@ -80,8 +80,8 @@ class KalmanBoxTracker(object):
         self.history = []
         self.hits += 1
         self.hit_streak += 1
-        if not self.dcf_config['predict_position']:
-            self.kf.update(convert_bbox_to_z(bbox))
+        # if not self.dcf_config['predict_position']:
+        self.kf.update(convert_bbox_to_z(bbox))
         if features is not None and features_bbox is not None:
             self.dcf.update_filter(features, features_bbox)
 
@@ -89,15 +89,13 @@ class KalmanBoxTracker(object):
         """
         Advances the state vector and returns the predicted bounding box estimate.
         """
+        if features is not None and self.dcf_config:
+            self.dcf.predict_displacement(features, self.get_state(), debug=debug)
+        if((self.kf.x[6]+self.kf.x[2])<=0):
+            self.kf.x[6] *= 0.0
+        self.kf.predict()
         if features is not None and self.dcf_config and self.dcf_config['predict_position']:
-            # print(debug, "pre state:", self.kf.x)
-            predicted_displacement = self.dcf.predict_displacement(features, self.get_state(), debug=debug)
-            self.kf.x[:4] = convert_bbox_to_z(self.get_state() + predicted_displacement)
-            # print("disp:", predicted_displacement, "modified state:", self.kf.x)
-        else:
-            if((self.kf.x[6]+self.kf.x[2])<=0):
-                self.kf.x[6] *= 0.0
-            self.kf.predict()
+            self.kf.x[:4] = convert_bbox_to_z(self.get_state() + self.dcf.predicted_displacement)
             
         self.history.append(convert_x_to_bbox(self.kf.x))
         self.age += 1
@@ -151,6 +149,7 @@ class DCF():
 
         self.init_filter(features, bbox, debug=debug)
         self.psr = -1
+        self.max_response = -1
         # self.selfcorr = np.max(self.compute_response(features, bbox))
     
     def init_filter(self, features, bbox, debug=None):
@@ -182,6 +181,7 @@ class DCF():
         features_bbox = scale_coords(self.img_shape, np.expand_dims(bbox, axis=0), features.shape[2:])
         response = self.compute_response(features, features_bbox[0], debug=None)
         max_value = np.max(response)
+        self.max_response = max_value
         max_pos = np.where(response == max_value)
         max_pos = (int(np.mean(max_pos[1])), int(np.mean(max_pos[0])))
 
@@ -195,6 +195,7 @@ class DCF():
         dy /= self.y_scale
         # scale from features dimension to image dimension
         displacement = scale_coords(features.shape[2:], np.array([[dx, dy, dx, dy]]), self.img_shape)[0]
+        self.predicted_displacement = displacement
 
         if debug is not None:
             debug_response = ((response - np.min(response)) / (np.max(response) - np.min(response))) * 255

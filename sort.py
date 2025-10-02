@@ -127,14 +127,14 @@ class Sort(object):
         if debug:
             vis_img = draw_frame_info(debug_img, self.trackers, dets, self.frame_count)
             self.debug_history_itstart.append(vis_img)
-            cv2.imshow('debug, iteration start', vis_img)
+            # cv2.imshow('debug, iteration start', vis_img)
 
         self.local_prediction(features)
 
         if debug:
             vis_img = draw_frame_info(debug_img, self.trackers, dets, self.frame_count)
             self.debug_history_locpred.append(vis_img)
-            cv2.imshow('debug, local prediction', vis_img)
+            # cv2.imshow('debug, local prediction', vis_img)
 
         if self.dcf_config is not None:
             scaled_dets = scale_coords(self.img_shape, dets, features.shape[2:])
@@ -403,41 +403,69 @@ if __name__ == '__main__':
         seq_dets = np.loadtxt(join(args.seq_path, phase, seq, 'det', 'det.txt'), delimiter=',')
         seq_features_dir = join(args.seq_path, phase, seq, 'features')
 
-        with open(os.path.join(output_dir, '%s.txt'%(seq)),'w') as out_file:
-            pbar = tqdm(range(int(seq_dets[:,0].max())))
-            for frame in pbar:
-                if use_dcf:
-                    frame_features_path = join(seq_features_dir, 'frame{}_f{}.npy'.format(frame, dcf_config["use_conv_features"]))
-                    frame_features = np.load(frame_features_path)
-                else:
-                    frame_features = None
+        if args.debug:
+            frame = 1
+            num_frames = int(seq_dets[:,0].max())
+            while(key != ord('q') and key != ord('s')):
+                key = cv2.waitKey(0)
+                if key == ord('.'): # next
+                    if frame < num_frames:
+                        frame += 1
+                elif key == ord(','): # prev
+                    if frame > 1:
+                        frame -= 1
 
-                frame += 1 #detection and frame numbers begin at 1
-                # if seq == "KITTI-13" and frame == 50:
-                #     args.debug = True
-                dets = seq_dets[seq_dets[:, 0]==frame, 2:7]
-                dets[:, 2:4] += dets[:, 0:2] #convert to [x1,y1,w,h] to [x1,y1,x2,y2]
-                total_frames += 1
-
-                if args.debug and args.debug_images != "":
+                if frame > mot_tracker.frame_count:
+                    # generate new frame
+                    if use_dcf:
+                            frame_features_path = join(seq_features_dir, 'frame{}_f{}.npy'.format(frame - 1, dcf_config["use_conv_features"]))
+                            frame_features = np.load(frame_features_path)
+                    else:
+                        frame_features = None
+                    dets = seq_dets[seq_dets[:, 0] == (frame), 2:7]
+                    dets[:, 2:4] += dets[:, 0:2] #convert to [x1,y1,w,h] to [x1,y1,x2,y2]
                     debug_img = cv2.imread(join(args.debug_images, seq, 'img1', '%06d.jpg'%(frame)))
-                else:
-                    debug_img = None
+                    mot_tracker.update(dets, features=frame_features, debug_img=debug_img, debug=args.debug)
+                
+                cv2.imshow('debug, iteration start', mot_tracker.debug_history_itstart[frame - 1])
+                cv2.imshow('debug, local prediction', mot_tracker.debug_history_locpred[frame - 1])
 
-                start_time = time.time()
-                trackers = mot_tracker.update(dets, features=frame_features, debug_img=debug_img, debug=args.debug)
-                cycle_time = time.time() - start_time
-                total_time += cycle_time
+        else:
+            with open(os.path.join(output_dir, '%s.txt'%(seq)),'w') as out_file:
+                pbar = tqdm(range(int(seq_dets[:,0].max())))
+                for frame in pbar:
+                    if use_dcf:
+                        frame_features_path = join(seq_features_dir, 'frame{}_f{}.npy'.format(frame, dcf_config["use_conv_features"]))
+                        frame_features = np.load(frame_features_path)
+                    else:
+                        frame_features = None
 
-                for d in trackers:
-                    print('%d,%d,%.2f,%.2f,%.2f,%.2f,1,-1,-1,-1'%(frame,d[4],d[0],d[1],d[2]-d[0],d[3]-d[1]),file=out_file)
+                    frame += 1 #detection and frame numbers begin at 1
+                    # if seq == "KITTI-13" and frame == 50:
+                    #     args.debug = True
+                    dets = seq_dets[seq_dets[:, 0]==frame, 2:7]
+                    dets[:, 2:4] += dets[:, 0:2] #convert to [x1,y1,w,h] to [x1,y1,x2,y2]
+                    total_frames += 1
 
-                if args.debug and args.debug_images != "":
-                    key = cv2.waitKey(0)
-                    if key == ord('s') or key == ord('q'):
-                        break
+                    if args.debug and args.debug_images != "":
+                        debug_img = cv2.imread(join(args.debug_images, seq, 'img1', '%06d.jpg'%(frame)))
+                    else:
+                        debug_img = None
 
-            print('Max dcf response in sequence:', mot_tracker.max_dcf_response)
+                    start_time = time.time()
+                    trackers = mot_tracker.update(dets, features=frame_features, debug_img=debug_img, debug=args.debug)
+                    cycle_time = time.time() - start_time
+                    total_time += cycle_time
+
+                    for d in trackers:
+                        print('%d,%d,%.2f,%.2f,%.2f,%.2f,1,-1,-1,-1'%(frame,d[4],d[0],d[1],d[2]-d[0],d[3]-d[1]),file=out_file)
+
+                    if args.debug and args.debug_images != "":
+                        key = cv2.waitKey(0)
+                        if key == ord('s') or key == ord('q'):
+                            break
+
+        print('Max dcf response in sequence:', mot_tracker.max_dcf_response)
         if key == ord('q'):
             break
         

@@ -91,19 +91,23 @@ class Sort(object):
         Sets key parameters for SORT
         """
         association_fn_lookup = {
-            'iou': self.associate_iou,
+            'simple': self.associate_iou,
             'cascaded': self.associate_cascaded
         }
+        self.association_strategy = association_fn_lookup[tracker_config['strategy']]
+        self.cost_matrix_type = tracker_config["cost_matrix_type"]
         self.max_age = tracker_config['max_age']
         self.min_hits = tracker_config['min_hits']
         self.hits_to_be_confirmed = tracker_config['hits_to_be_confirmed']
         self.iou_threshold = tracker_config['iou_threshold']
         self.max_iou_for_new_target = tracker_config['max_iou_for_new_target']
-        self.association_strategy = association_fn_lookup[tracker_config['strategy']]
         self.final_iou_assignment = tracker_config['final_iou_assignment']
         self.mask_cost_matrix_with_iou = tracker_config['mask_cost_matrix_with_iou']
-        self.max_report_age = tracker_config['max_report_age']
+        self.max_time_since_update_to_report = tracker_config['max_time_since_update_to_report']
+        self.predict_dcf_liveness = tracker_config['predict_dcf_liveness']
+        self.dcf_liveness_threshold = tracker_config['dcf_liveness_threshold']
 
+        self.use_dcf = dcf_config is not None
         self.dcf_config = dcf_config
         self.trackers = []
         self.frame_count = 0
@@ -112,6 +116,9 @@ class Sort(object):
 
         self.debug_history_itstart = []
         self.debug_history_locpred = []
+        self.debug_history_afterupdate = []
+
+        KalmanBoxTracker.tracker_config = tracker_config
 
     def update(self, dets=np.empty((0, 5)), features=None, debug_img=None, debug=None):
         """
@@ -125,18 +132,18 @@ class Sort(object):
         ret = []
         self.frame_count += 1
         if debug:
-            vis_img = draw_frame_info(debug_img, self.trackers, dets, self.frame_count)
+            vis_img = draw_frame_info(debug_img, self.trackers, dets, self.frame_count, dcf=self.use_dcf)
             self.debug_history_itstart.append(vis_img)
             # cv2.imshow('debug, iteration start', vis_img)
 
-        self.local_prediction(features)
+        self.local_prediction(features, debug=debug)
 
         if debug:
-            vis_img = draw_frame_info(debug_img, self.trackers, dets, self.frame_count)
+            vis_img = draw_frame_info(debug_img, self.trackers, dets, self.frame_count, dcf=self.use_dcf)
             self.debug_history_locpred.append(vis_img)
             # cv2.imshow('debug, local prediction', vis_img)
 
-        if self.dcf_config is not None:
+        if self.use_dcf:
             scaled_dets = scale_coords(self.img_shape, dets, features.shape[2:])
         else:
             scaled_dets = None
@@ -154,34 +161,45 @@ class Sort(object):
             scaled_bbox = None if scaled_dets is None else scaled_dets[m[0], :]
             self.trackers[m[1]].update(bbox, features=features, features_bbox=scaled_bbox)
 
-        # create and initialise new trackers for unmatched detections
+        # create and initialize new trackers for unmatched detections
         for i in unmatched_dets:
-            trk = KalmanBoxTracker(dets[i, :],
-                                   self.hits_to_be_confirmed,
-                                   self.dcf_config,
-                                   self.img_shape,
-                                   features,
-                                   None if scaled_dets is None else scaled_dets[i, :],
+            trk = KalmanBoxTracker(bbox=dets[i, :],
+                                   hits_to_be_confirmed=self.hits_to_be_confirmed,
+                                   dcf_config=self.dcf_config,
+                                   img_shape=self.img_shape,
+                                   features=features,
+                                   features_bbox=None if scaled_dets is None else scaled_dets[i, :],
                                    debug="init_from_det{}".format(i) if debug else None)
             self.trackers.append(trk)
+
+        if self.predict_dcf_liveness:
+            for i in unmatched_trks:
+                print(self.trackers[i].get_state() + self.trackers[i].dcf.predicted_displacement)
+                print('unmatched id:', self.trackers[i].id, 'psr:', self.trackers[i].dcf.psr)
+
         i = len(self.trackers)
         for trk in reversed(self.trackers):
             d = trk.get_state()
-            if (trk.time_since_update <= self.max_report_age) and (trk.hit_streak >= self.min_hits or self.frame_count <= self.min_hits):
+            if (trk.time_since_update <= self.max_time_since_update_to_report) and (trk.hit_streak >= self.min_hits or self.frame_count <= self.min_hits):
                 ret.append(np.concatenate((d,[trk.id+1])).reshape(1,-1)) # +1 as MOT benchmark requires positive
             i -= 1
             # remove dead tracklet
             if(trk.time_since_update > self.max_age):
                 self.trackers.pop(i)
+
+        if debug:
+            vis_img = draw_frame_info(debug_img, self.trackers, dets, self.frame_count, dcf=self.use_dcf)
+            self.debug_history_afterupdate.append(vis_img)
+
         if(len(ret)>0):
             return np.concatenate(ret)
         return np.empty((0,5))
     
 
-    def local_prediction(self, features=None):
+    def local_prediction(self, features=None, debug=None):
         to_del = []
         for t, trk in enumerate(self.trackers):
-            pos = self.trackers[t].predict(features, debug="predict_trkid{}".format(trk.id))[0]
+            pos = self.trackers[t].predict(features, debug="predict_trkid{}".format(trk.id) if debug else None)[0]
             if np.any(np.isnan(pos)):
                 to_del.append(t)
         for t in reversed(to_del):
@@ -220,9 +238,6 @@ class Sort(object):
 
         Returns 3 lists of matches, unmatched_detections and unmatched_trackers
         """
-        # if debug:
-        #     debug_img = draw_frame_info(debug_img, trackers, detections, self.frame_count)
-        #     cv2.imshow('debug', debug_img)
         if(len(trackers)==0):
             return np.empty((0,2),dtype=int), np.arange(len(detections)), np.empty((0,5),dtype=int)
         trackers_bboxes = np.stack([np.squeeze(t.get_state()) for t in trackers])
@@ -236,7 +251,7 @@ class Sort(object):
                 matches = np.stack(np.where(a), axis=1)
             else:
                 # cost matrix
-                if self.dcf_config is not None:
+                if self.cost_matrix_type == "dcf":
                     cost_matrix = self.compute_dcf_cost_matrix(scaled_dets, trackers, features, iou_matrix, debug=debug)
                     if self.mask_cost_matrix_with_iou:
                         cost_matrix = np.where(iou_matrix <= self.iou_threshold, 1e+5, cost_matrix)
@@ -263,7 +278,7 @@ class Sort(object):
                         matches = np.concatenate([matches, matched_indices], axis=0)
 
                 # final iou assignment
-                if self.final_iou_assignment and self.dcf_config is not None:
+                if self.final_iou_assignment and self.use_dcf:
                     tracker_indices_to_match = [i for i in range(len(trackers))
                                                 if i not in matches[:, 1]]
                     matched_indices = linear_assignment(-iou_matrix,
@@ -297,9 +312,6 @@ class Sort(object):
 
         Returns 3 lists of matches, unmatched_detections and unmatched_trackers
         """
-        # if debug:
-        #     debug_img = draw_frame_info(debug_img, trackers, detections, self.frame_count)
-        #     cv2.imshow('debug', debug_img)
         if(len(trackers)==0):
             return np.empty((0,2),dtype=int), np.arange(len(detections)), np.empty((0,5),dtype=int)
         trackers_bboxes = np.stack([np.squeeze(t.get_state()) for t in trackers])
@@ -311,7 +323,7 @@ class Sort(object):
                 matched_indices = np.stack(np.where(a), axis=1)
             else:
                 # DCF matrix
-                if self.dcf_config is not None:
+                if self.cost_matrix_type == "dcf":
                     cost_matrix = self.compute_dcf_cost_matrix(scaled_dets, trackers, features, iou_matrix, debug=debug)
                     cost_matrix = np.where(iou_matrix <= self.iou_threshold, 1e+5, cost_matrix)
                 else:
@@ -380,7 +392,7 @@ if __name__ == '__main__':
     use_dcf = dcf_config['use_conv_features'] != -1
 
     if args.name != "" and args.name != "test" and os.path.exists(output_dir):
-        print('WARNING: output directory {} already exists, exiting...' )
+        print('WARNING: output directory {} already exists, exiting...'.format(output_dir))
         sys.exit()
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -429,6 +441,7 @@ if __name__ == '__main__':
                 
                 cv2.imshow('debug, iteration start', mot_tracker.debug_history_itstart[frame - 1])
                 cv2.imshow('debug, local prediction', mot_tracker.debug_history_locpred[frame - 1])
+                cv2.imshow('debug, after update', mot_tracker.debug_history_afterupdate[frame - 1])
 
         else:
             with open(os.path.join(output_dir, '%s.txt'%(seq)),'w') as out_file:

@@ -55,7 +55,7 @@ def draw_bboxes(img, dets, color=(0, 0, 255), xywh_layout=False, id_to_color=Non
                             cv2.LINE_AA)
         
 
-def draw_frame_info(img, trackers, detections, frame_number, scale=2):
+def draw_frame_info(img, trackers, detections, frame_number, scale=2, dcf=False):
     trackers_bboxes = np.stack([np.squeeze(t.get_state()) for t in trackers]) if trackers else np.empty(shape=(0,4), dtype=int)
     detections = detections.copy()
     if detections.size == 0:
@@ -68,10 +68,12 @@ def draw_frame_info(img, trackers, detections, frame_number, scale=2):
     detections_info = {"idx": list(range(detections.shape[0])),
                        "conf": ["{:.2f}".format(d) for d in detections[:, 4]]}
     trackers_info = {"id": [t.id for t in trackers],
-                     "age": [t.time_since_update for t in trackers],
-                     "hit_str": [t.hit_streak for t in trackers],
-                     "psr": ["{:.1f}".format(t.dcf.psr) for t in trackers],
-                     "m_res": ["{:.2f}".format(t.dcf.max_response) for t in trackers]}
+                     "sinc_upd": [t.time_since_update for t in trackers],
+                     "hit_str": [t.hit_streak for t in trackers]}
+    if dcf:
+        dcf_info = {"psr": ["{:.1f}".format(t.dcf.psr) for t in trackers],
+                    "m_res": ["{:.2f}".format(t.dcf.max_response) for t in trackers]}
+        trackers_info.update(dcf_info)
     img = cv2.resize(img, (0, 0), fx=scale, fy=scale)
     draw_text_line(img, "Tracks", line=0, color=(255, 0, 0))
     draw_text_line(img, "Detections", line=1, color=(0, 0, 255))

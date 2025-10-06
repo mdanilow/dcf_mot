@@ -3,6 +3,7 @@ import cv2
 from filterpy.kalman import KalmanFilter
 import torch
 from torchvision.ops import roi_pool, roi_align
+import matplotlib.pyplot as plt
 
 from utils import draw_bboxes, scale_coords, draw_text_line
 
@@ -39,6 +40,7 @@ class KalmanBoxTracker(object):
     """
     This class represents the internal state of individual tracked objects observed as bbox.
     """
+    tracker_config = None
     count = 0
     def __init__(self, bbox, hits_to_be_confirmed=3, dcf_config=None, img_shape=None, features=None, features_bbox=None, debug=None):
         """
@@ -63,8 +65,9 @@ class KalmanBoxTracker(object):
         self.hits = 0
         self.hit_streak = 0
         self.age = 0
-        self.hits_to_be_confirmed =  hits_to_be_confirmed
+        self.hits_to_be_confirmed = hits_to_be_confirmed
         self.dcf_config = dcf_config
+        self.predict_dcf_liveness = KalmanBoxTracker.tracker_config['predict_dcf_liveness']
 
         if dcf_config is not None and features is not None and features_bbox is not None:
             self.dcf = DCF(dcf_config, img_shape, features, features_bbox, debug=debug)
@@ -89,11 +92,11 @@ class KalmanBoxTracker(object):
         """
         Advances the state vector and returns the predicted bounding box estimate.
         """
-        if features is not None and self.dcf_config:
-            self.dcf.predict_displacement(features, self.get_state(), debug=debug)
         if((self.kf.x[6]+self.kf.x[2])<=0):
             self.kf.x[6] *= 0.0
         self.kf.predict()
+        if features is not None and self.dcf_config and self.predict_dcf_liveness:
+            self.dcf.predict_displacement(features, self.get_state(), debug=debug)
         if features is not None and self.dcf_config and self.dcf_config['predict_position']:
             self.kf.x[:4] = convert_bbox_to_z(self.get_state() + self.dcf.predicted_displacement)
             

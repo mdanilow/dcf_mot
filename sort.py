@@ -96,14 +96,16 @@ class Sort(object):
         }
         self.association_strategy = association_fn_lookup[tracker_config['strategy']]
         self.cost_matrix_type = tracker_config["cost_matrix_type"]
-        self.max_age = tracker_config['max_age']
-        self.min_hits = tracker_config['min_hits']
+        self.max_time_since_update = tracker_config['max_time_since_update']                                    # track deletion threshold
+        self.max_time_since_detected = tracker_config['max_time_since_detected']    # track deletion threshold    
+        self.min_hit_streak = tracker_config['min_hit_streak']
         self.hits_to_be_confirmed = tracker_config['hits_to_be_confirmed']
         self.iou_threshold = tracker_config['iou_threshold']
         self.max_iou_for_new_target = tracker_config['max_iou_for_new_target']
         self.final_iou_assignment = tracker_config['final_iou_assignment']
         self.mask_cost_matrix_with_iou = tracker_config['mask_cost_matrix_with_iou']
         self.max_time_since_update_to_report = tracker_config['max_time_since_update_to_report']
+        self.max_time_since_detected_to_report = tracker_config['max_time_since_detected_to_report']
         self.predict_dcf_liveness = tracker_config['predict_dcf_liveness']
         self.dcf_liveness_threshold = tracker_config['dcf_liveness_threshold']
 
@@ -159,7 +161,7 @@ class Sort(object):
         for m in matched:
             bbox = dets[m[0], :]
             scaled_bbox = None if scaled_dets is None else scaled_dets[m[0], :]
-            self.trackers[m[1]].update(bbox, features=features, features_bbox=scaled_bbox)
+            self.trackers[m[1]].update(bbox, features=features, features_bbox=scaled_bbox, detected=True)
 
         # create and initialize new trackers for unmatched detections
         for i in unmatched_dets:
@@ -172,19 +174,32 @@ class Sort(object):
                                    debug="init_from_det{}".format(i) if debug else None)
             self.trackers.append(trk)
 
+        # check liveness of unmatched trackers
         if self.predict_dcf_liveness:
             for i in unmatched_trks:
-                print(self.trackers[i].get_state() + self.trackers[i].dcf.predicted_displacement)
-                print('unmatched id:', self.trackers[i].id, 'psr:', self.trackers[i].dcf.psr)
+                if self.trackers[i].dcf.psr >= self.dcf_liveness_threshold:
+                    # print('unmatched id:', self.trackers[i].id, 'psr:', self.trackers[i].dcf.psr)
+                    predicted_bbox = self.trackers[i].get_state() + self.trackers[i].dcf.predicted_displacement
+                    scaled_bbox = scale_coords(self.img_shape, np.expand_dims(predicted_bbox, 0), features.shape[2:])[0]
+                    self.trackers[i].update(predicted_bbox,
+                                            features=features,
+                                            features_bbox=scaled_bbox,
+                                            detected=False,
+                                            debug="liveness update, trkid{}".format(self.trackers[i].id))
+                    # print(self.trackers[i].get_state() + self.trackers[i].dcf.predicted_displacement)
 
         i = len(self.trackers)
         for trk in reversed(self.trackers):
             d = trk.get_state()
-            if (trk.time_since_update <= self.max_time_since_update_to_report) and (trk.hit_streak >= self.min_hits or self.frame_count <= self.min_hits):
+            if (
+                trk.time_since_update <= self.max_time_since_update_to_report
+                and (trk.hit_streak >= self.min_hit_streak or self.frame_count <= self.min_hit_streak)
+                and trk.time_since_detected <= self.max_time_since_detected_to_report
+            ):
                 ret.append(np.concatenate((d,[trk.id+1])).reshape(1,-1)) # +1 as MOT benchmark requires positive
             i -= 1
             # remove dead tracklet
-            if(trk.time_since_update > self.max_age):
+            if (trk.time_since_update > self.max_time_since_update) or (trk.time_since_detected > self.max_time_since_detected):
                 self.trackers.pop(i)
 
         if debug:
@@ -261,7 +276,7 @@ class Sort(object):
                 # if debug is not None:
                 #     cv2.waitKey(0)
                 # matching cascade
-                for age in range(self.max_age):
+                for age in range(self.max_time_since_update):
                     if len(detection_indices_to_match) == 0:
                         break
                     tracker_indices_to_match = [i for i in range(len(trackers))

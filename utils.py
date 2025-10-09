@@ -69,10 +69,12 @@ def draw_frame_info(img, trackers, detections, frame_number, scale=2, dcf=False)
                        "conf": ["{:.2f}".format(d) for d in detections[:, 4]]}
     trackers_info = {"id": [t.id for t in trackers],
                      "sinc_upd": [t.time_since_update for t in trackers],
-                     "hit_str": [t.hit_streak for t in trackers]}
+                     "hitstr": [t.hit_streak for t in trackers]}
     if dcf:
         dcf_info = {"psr": ["{:.1f}".format(t.dcf.psr) for t in trackers],
-                    "m_res": ["{:.2f}".format(t.dcf.max_response) for t in trackers]}
+                    "m_res": ["{:.2f}".format(t.dcf.max_response) for t in trackers],
+                    "sinc_det": [t.time_since_detected for t in trackers],
+                    "d_hitstr": [t.detection_hit_streak for t in trackers]}
         trackers_info.update(dcf_info)
     img = cv2.resize(img, (0, 0), fx=scale, fy=scale)
     draw_text_line(img, "Tracks", line=0, color=(255, 0, 0))

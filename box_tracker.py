@@ -58,12 +58,14 @@ class KalmanBoxTracker(object):
         self.kf.Q[4:,4:] *= 0.01
 
         self.kf.x[:4] = convert_bbox_to_z(bbox)
-        self.time_since_update = 0
+        self.time_since_update = 0      # since detected OR considered alive by the dcf
+        self.time_since_detected = 0    # since detected
         self.id = KalmanBoxTracker.count
         KalmanBoxTracker.count += 1
         self.history = []
         self.hits = 0
-        self.hit_streak = 0
+        self.hit_streak = 0             # if detected OR considered alive by the dcf
+        self.detection_hit_streak = 0   # if detected
         self.age = 0
         self.hits_to_be_confirmed = hits_to_be_confirmed
         self.dcf_config = dcf_config
@@ -75,7 +77,7 @@ class KalmanBoxTracker(object):
     def is_confirmed(self):
         return self.hits >= self.hits_to_be_confirmed
 
-    def update(self, bbox, features=None, features_bbox=None):
+    def update(self, bbox, features=None, features_bbox=None, detected=False, debug=None):
         """
         Updates the state vector with observed bbox.
         """
@@ -85,8 +87,11 @@ class KalmanBoxTracker(object):
         self.hit_streak += 1
         # if not self.dcf_config['predict_position']:
         self.kf.update(convert_bbox_to_z(bbox))
-        if features is not None and features_bbox is not None:
-            self.dcf.update_filter(features, features_bbox)
+        if detected:
+            self.time_since_detected = 0
+            self.detection_hit_streak += 1
+            if (features is not None) and (features_bbox is not None):
+                self.dcf.update_filter(features, features_bbox, debug=debug)
 
     def predict(self, features=None, debug=None):
         """
@@ -102,9 +107,12 @@ class KalmanBoxTracker(object):
             
         self.history.append(convert_x_to_bbox(self.kf.x))
         self.age += 1
-        if(self.time_since_update>0):
+        if(self.time_since_update > 0):
             self.hit_streak = 0
         self.time_since_update += 1
+        if(self.time_since_detected > 0):
+            self.detection_hit_streak = 0
+        self.time_since_detected += 1
         return self.history[-1]
 
     def get_state(self):

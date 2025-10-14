@@ -1,3 +1,4 @@
+from enum import Enum
 import numpy as np
 import cv2
 from filterpy.kalman import KalmanFilter
@@ -6,6 +7,12 @@ from torchvision.ops import roi_pool, roi_align
 import matplotlib.pyplot as plt
 
 from utils import draw_bboxes, scale_coords, draw_text_line
+
+
+class TrackerState(Enum):
+    UNCERTAIN = 0
+    ACTIVE = 1
+    FOR_TERMINATION = 2
 
 
 def convert_bbox_to_z(bbox):
@@ -41,8 +48,9 @@ class KalmanBoxTracker(object):
     This class represents the internal state of individual tracked objects observed as bbox.
     """
     tracker_config = None
+    frame_count = 0
     count = 0
-    def __init__(self, bbox, hits_to_be_confirmed=3, dcf_config=None, img_shape=None, features=None, features_bbox=None, debug=None):
+    def __init__(self, bbox, dcf_config=None, img_shape=None, features=None, features_bbox=None, debug=None):
         """
         Initialises a tracker using initial bounding box.
         """
@@ -67,15 +75,37 @@ class KalmanBoxTracker(object):
         self.hit_streak = 0             # if detected OR considered alive by the dcf
         self.detection_hit_streak = 0   # if detected
         self.age = 0
-        self.hits_to_be_confirmed = hits_to_be_confirmed
         self.dcf_config = dcf_config
         self.predict_dcf_liveness = KalmanBoxTracker.tracker_config['predict_dcf_liveness']
+
+        self.__tracker_state = TrackerState.UNCERTAIN
 
         if dcf_config is not None and features is not None and features_bbox is not None:
             self.dcf = DCF(dcf_config, img_shape, features, features_bbox, debug=debug)
 
-    def is_confirmed(self):
-        return self.hits >= self.hits_to_be_confirmed
+    @property
+    def tracker_state(self):
+        if self.__tracker_state == TrackerState.UNCERTAIN:
+            if (
+                self.time_since_update > KalmanBoxTracker.tracker_config['max_time_since_update']
+                or self.time_since_detected > KalmanBoxTracker.tracker_config['max_time_since_detected']
+            ):
+                self.__tracker_state = TrackerState.FOR_TERMINATION
+
+            elif (
+                self.time_since_update <= KalmanBoxTracker.tracker_config['max_time_since_update_to_report']
+                and (self.hit_streak >= KalmanBoxTracker.tracker_config['min_hit_streak'] or KalmanBoxTracker.frame_count <= KalmanBoxTracker.tracker_config['min_hit_streak'])
+                and self.time_since_detected <= KalmanBoxTracker.tracker_config['max_time_since_detected_to_report']
+            ):
+                self.__tracker_state = TrackerState.ACTIVE
+        
+        elif self.__tracker_state == TrackerState.ACTIVE:
+            if (
+                self.time_since_update > KalmanBoxTracker.tracker_config['max_time_since_update']
+                or self.time_since_detected > KalmanBoxTracker.tracker_config['max_time_since_detected']
+            ):
+                self.__tracker_state = TrackerState.FOR_TERMINATION
+        return self.__tracker_state
 
     def update(self, bbox, features=None, features_bbox=None, detected=False, debug=None):
         """

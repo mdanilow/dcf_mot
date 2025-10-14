@@ -37,7 +37,7 @@ from scipy.optimize import linear_sum_assignment
 import json
 
 from utils import draw_bboxes, scale_coords, draw_frame_info
-from box_tracker import KalmanBoxTracker
+from box_tracker import KalmanBoxTracker, TrackerState
 
 np.random.seed(0)
 
@@ -133,6 +133,7 @@ class Sort(object):
         """
         ret = []
         self.frame_count += 1
+        KalmanBoxTracker.frame_count = self.frame_count
         if debug:
             vis_img = draw_frame_info(debug_img, self.trackers, dets, self.frame_count, dcf=self.use_dcf)
             self.debug_history_itstart.append(vis_img)
@@ -166,7 +167,6 @@ class Sort(object):
         # create and initialize new trackers for unmatched detections
         for i in unmatched_dets:
             trk = KalmanBoxTracker(bbox=dets[i, :],
-                                   hits_to_be_confirmed=self.hits_to_be_confirmed,
                                    dcf_config=self.dcf_config,
                                    img_shape=self.img_shape,
                                    features=features,
@@ -177,7 +177,7 @@ class Sort(object):
         # check liveness of unmatched trackers
         if self.predict_dcf_liveness:
             for i in unmatched_trks:
-                if self.trackers[i].dcf.psr >= self.dcf_liveness_threshold:
+                if self.trackers[i].dcf.psr >= self.dcf_liveness_threshold and self.trackers[i].tracker_state == TrackerState.ACTIVE:
                     # print('unmatched id:', self.trackers[i].id, 'psr:', self.trackers[i].dcf.psr)
                     predicted_bbox = self.trackers[i].get_state() + self.trackers[i].dcf.predicted_displacement
                     scaled_bbox = scale_coords(self.img_shape, np.expand_dims(predicted_bbox, 0), features.shape[2:])[0]
@@ -190,6 +190,7 @@ class Sort(object):
 
         i = len(self.trackers)
         for trk in reversed(self.trackers):
+            trk_state = trk.tracker_state
             d = trk.get_state()
             if (
                 trk.time_since_update <= self.max_time_since_update_to_report
@@ -199,7 +200,8 @@ class Sort(object):
                 ret.append(np.concatenate((d,[trk.id+1])).reshape(1,-1)) # +1 as MOT benchmark requires positive
             i -= 1
             # remove dead tracklet
-            if (trk.time_since_update > self.max_time_since_update) or (trk.time_since_detected > self.max_time_since_detected):
+            if trk_state == TrackerState.FOR_TERMINATION:
+            # if (trk.time_since_update > self.max_time_since_update) or (trk.time_since_detected > self.max_time_since_detected):
                 self.trackers.pop(i)
 
         if debug:

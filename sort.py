@@ -86,7 +86,7 @@ def iou_batch(bb_test, bb_gt):
 
 
 class Sort(object):
-    def __init__(self, tracker_config, dcf_config=None, img_shape=None):
+    def __init__(self, tracker_config, dcf_config=None, img_shape=None, debug_vis_scale=1):
         """
         Sets key parameters for SORT
         """
@@ -119,6 +119,7 @@ class Sort(object):
         self.debug_history_itstart = []
         self.debug_history_locpred = []
         self.debug_history_afterupdate = []
+        self.debug_vis_scale = debug_vis_scale
 
         KalmanBoxTracker.tracker_config = tracker_config
 
@@ -135,14 +136,14 @@ class Sort(object):
         self.frame_count += 1
         KalmanBoxTracker.frame_count = self.frame_count
         if debug:
-            vis_img = draw_frame_info(debug_img, self.trackers, dets, self.frame_count, dcf=self.use_dcf)
+            vis_img = draw_frame_info(debug_img, self.trackers, dets, self.frame_count, dcf=self.use_dcf, scale=self.debug_vis_scale)
             self.debug_history_itstart.append(vis_img)
             # cv2.imshow('debug, iteration start', vis_img)
 
         self.local_prediction(features, debug=debug)
 
         if debug:
-            vis_img = draw_frame_info(debug_img, self.trackers, dets, self.frame_count, dcf=self.use_dcf)
+            vis_img = draw_frame_info(debug_img, self.trackers, dets, self.frame_count, dcf=self.use_dcf, scale=self.debug_vis_scale)
             self.debug_history_locpred.append(vis_img)
             # cv2.imshow('debug, local prediction', vis_img)
 
@@ -205,7 +206,7 @@ class Sort(object):
                 self.trackers.pop(i)
 
         if debug:
-            vis_img = draw_frame_info(debug_img, self.trackers, dets, self.frame_count, dcf=self.use_dcf)
+            vis_img = draw_frame_info(debug_img, self.trackers, dets, self.frame_count, dcf=self.use_dcf, scale=self.debug_vis_scale)
             self.debug_history_afterupdate.append(vis_img)
 
         if(len(ret)>0):
@@ -388,6 +389,7 @@ def parse_args():
     parser.add_argument("--output_dir", help="Path to the output dir", type=str, default="output")
     parser.add_argument("--debug_images", help="Path to directory with sequences in mot format for visualization", type=str, default="")
     parser.add_argument("--debug", action='store_true')
+    parser.add_argument("--debug_vis_scale", help="Scale the image for visualization (applicable if --debug)", type=float, default=1)
     parser.add_argument("--name", help="experiment name in output dir", type=str, default="")
     parser.add_argument("--single_sequence", help="Run only for this sequence", type=str, default=None)
     args = parser.parse_args()
@@ -428,14 +430,15 @@ if __name__ == '__main__':
             img_shape = None
         mot_tracker = Sort(tracker_config=tracker_config,
                             dcf_config=dcf_config if use_dcf else None,
-                            img_shape=img_shape) #create instance of the SORT tracker
+                            img_shape=img_shape,
+                            debug_vis_scale=args.debug_vis_scale) #create instance of the SORT tracker
         seq_dets = np.loadtxt(join(args.seq_path, phase, seq, 'det', 'det.txt'), delimiter=',')
         seq_features_dir = join(args.seq_path, phase, seq, 'features')
 
         if args.debug:
             frame = 1
             num_frames = int(seq_dets[:,0].max())
-            while(key != ord('q') and key != ord('s')):
+            while(True):
                 key = cv2.waitKey(0)
                 if key == ord('.'): # next
                     if frame < num_frames:
@@ -443,6 +446,9 @@ if __name__ == '__main__':
                 elif key == ord(','): # prev
                     if frame > 1:
                         frame -= 1
+                if key == ord('s') or key == ord('q'):
+                    cv2.destroyAllWindows()
+                    break
 
                 if frame > mot_tracker.frame_count:
                     # generate new frame
@@ -490,15 +496,10 @@ if __name__ == '__main__':
                     for d in trackers:
                         print('%d,%d,%.2f,%.2f,%.2f,%.2f,1,-1,-1,-1'%(frame,d[4],d[0],d[1],d[2]-d[0],d[3]-d[1]),file=out_file)
 
-                    if args.debug and args.debug_images != "":
-                        key = cv2.waitKey(0)
-                        if key == ord('s') or key == ord('q'):
-                            break
-
         print('Max dcf response in sequence:', mot_tracker.max_dcf_response)
         if key == ord('q'):
             break
         
-
-    print("Total Tracking took: %.3f seconds for %d frames or %.1f FPS" % (total_time, total_frames, total_frames / total_time))
+    if not args.debug:
+        print("Total Tracking took: %.3f seconds for %d frames or %.1f FPS" % (total_time, total_frames, total_frames / total_time))
 

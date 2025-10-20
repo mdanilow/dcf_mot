@@ -20,7 +20,7 @@
         "lambd": 0.01,
         "lr": 0.025,
         "normalize_features": true,
-        "predict_position": true,
+        "predict_position": false,
         "psr_peak_crop_size": 11
     }
 }

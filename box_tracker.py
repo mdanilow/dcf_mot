@@ -11,8 +11,10 @@ from utils import draw_bboxes, scale_coords, draw_text_line
 
 class TrackerState(Enum):
     UNCERTAIN = 0
-    ACTIVE = 1
-    FOR_TERMINATION = 2
+    CONFIRMED = 1
+    ACTIVE = 2
+    OCCLUDED = 3
+    FOR_TERMINATION = 4
 
 
 def convert_bbox_to_z(bbox):
@@ -97,9 +99,9 @@ class KalmanBoxTracker(object):
                 and (self.hit_streak >= KalmanBoxTracker.tracker_config['min_hit_streak'] or KalmanBoxTracker.frame_count <= KalmanBoxTracker.tracker_config['min_hit_streak'])
                 and self.time_since_detected <= KalmanBoxTracker.tracker_config['max_time_since_detected_to_report']
             ):
-                self.__tracker_state = TrackerState.ACTIVE
+                self.__tracker_state = TrackerState.CONFIRMED
         
-        elif self.__tracker_state == TrackerState.ACTIVE:
+        elif self.__tracker_state == TrackerState.CONFIRMED:
             if (
                 self.time_since_update > KalmanBoxTracker.tracker_config['max_time_since_update']
                 or self.time_since_detected > KalmanBoxTracker.tracker_config['max_time_since_detected']

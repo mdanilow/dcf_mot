@@ -6,6 +6,7 @@
         "max_time_since_detected": 1,
         "min_hit_streak": 3,
         "iou_threshold": 0.3,
+        "max_association_cost": 1e+5,
         "max_iou_for_new_target": 1,
         "hits_to_be_confirmed": 3,
         "final_iou_assignment": false,
@@ -13,7 +14,9 @@
         "max_time_since_update_to_report": 0,
         "max_time_since_detected_to_report": 0,
         "predict_dcf_liveness": false,
-        "dcf_liveness_threshold": 20
+        "dcf_liveness_threshold": 20,
+        "det_score_low_th": 0.0,
+        "det_score_high_th": 0.0
     },
     "dcf_config": {
         "use_conv_features": -1,

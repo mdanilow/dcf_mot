@@ -59,7 +59,9 @@ def draw_frame_info(img, trackers, detections, frame_number, scale=2, dcf=False)
     trackers_bboxes = np.stack([np.squeeze(t.get_state()) for t in trackers]) if trackers else np.empty(shape=(0,4), dtype=int)
     detections = detections.copy()
     if detections.size == 0:
-        detections = np.empty(shape=(0, 4), dtype=int)
+        detections = np.empty(shape=(0, 5), dtype=int)
+    trackers_bboxes = trackers_bboxes.astype(float)
+    detections = detections.astype(float)
     # if not show_conf and detections.size > 0:
     #     detections = np.array([det[:4] for det in detections])
     trackers_bboxes[:, :4] *= scale

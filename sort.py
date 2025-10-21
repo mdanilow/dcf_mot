@@ -87,7 +87,7 @@ def iou_batch(bb_test, bb_gt):
 
 
 class Sort(object):
-    def __init__(self, tracker_config, dcf_config=None, img_shape=None, debug_vis_scale=1):
+    def __init__(self, tracker_config, dcf_config=None, img_shape=None, debug_vis_scale=1, det_score_division=1):
         """
         Sets key parameters for SORT
         """
@@ -125,6 +125,7 @@ class Sort(object):
         self.debug_history_locpred = []
         self.debug_history_afterupdate = []
         self.debug_vis_scale = debug_vis_scale
+        self.det_score_division = det_score_division
 
         KalmanBoxTracker.tracker_config = tracker_config
 
@@ -144,8 +145,7 @@ class Sort(object):
             vis_img = draw_frame_info(debug_img, self.trackers, dets, self.frame_count, dcf=self.use_dcf, scale=self.debug_vis_scale)
             self.debug_history_itstart.append(vis_img)
             # cv2.imshow('debug, iteration start', vis_img)
-        if any(dets[:, 4] > 1):
-            dets[:, 4] /= 100
+        dets[:, 4] /= self.det_score_division
 
         self.local_prediction(features, debug=debug)
 
@@ -202,8 +202,9 @@ class Sort(object):
             d = trk.get_state()
             if (
                 trk.time_since_update <= self.max_time_since_update_to_report
-                and (trk.detection_hit_streak >= self.min_hit_streak or self.frame_count <= self.min_hit_streak)
+                # and (trk.detection_hit_streak >= self.min_hit_streak or self.frame_count <= self.min_hit_streak)
                 and trk.time_since_detected <= self.max_time_since_detected_to_report
+                and trk.tracker_state == TrackerState.CONFIRMED
             ):
                 ret.append(np.concatenate((d,[trk.id+1])).reshape(1,-1)) # +1 as MOT benchmark requires positive
             i -= 1
@@ -489,6 +490,7 @@ def parse_args():
     parser.add_argument("--debug_vis_scale", help="Scale the image for visualization (applicable if --debug)", type=float, default=1)
     parser.add_argument("--name", help="experiment name in output dir", type=str, default="")
     parser.add_argument("--single_sequence", help="Run only for this sequence", type=str, default=None)
+    parser.add_argument("--det_score_division", help="Divide detection scores by this much", type=float, default=1)
     args = parser.parse_args()
     return args
 
@@ -506,6 +508,11 @@ if __name__ == '__main__':
     tracker_config = config["tracker_config"]
     dcf_config = config["dcf_config"]
     use_dcf = dcf_config['use_conv_features'] != -1
+    print('Tracker config:')
+    print(tracker_config)
+    if use_dcf:
+        print('DCF config:')
+        print(dcf_config)
 
     if args.name != "" and args.name != "test" and os.path.exists(output_dir):
         print('WARNING: output directory {} already exists, exiting...'.format(output_dir))
@@ -528,7 +535,8 @@ if __name__ == '__main__':
         mot_tracker = Sort(tracker_config=tracker_config,
                             dcf_config=dcf_config if use_dcf else None,
                             img_shape=img_shape,
-                            debug_vis_scale=args.debug_vis_scale) #create instance of the SORT tracker
+                            debug_vis_scale=args.debug_vis_scale,
+                            det_score_division=args.det_score_division) #create instance of the SORT tracker
         seq_dets = np.loadtxt(join(args.seq_path, phase, seq, 'det', 'det.txt'), delimiter=',')
         seq_features_dir = join(args.seq_path, phase, seq, 'features')
 
@@ -536,17 +544,6 @@ if __name__ == '__main__':
             frame = 1
             num_frames = int(seq_dets[:,0].max())
             while(True):
-                key = cv2.waitKey(0)
-                if key == ord('.'): # next
-                    if frame < num_frames:
-                        frame += 1
-                elif key == ord(','): # prev
-                    if frame > 1:
-                        frame -= 1
-                if key == ord('s') or key == ord('q'):
-                    cv2.destroyAllWindows()
-                    break
-
                 if frame > mot_tracker.frame_count:
                     # generate new frame
                     if use_dcf:
@@ -562,6 +559,17 @@ if __name__ == '__main__':
                 cv2.imshow('debug, iteration start', mot_tracker.debug_history_itstart[frame - 1])
                 cv2.imshow('debug, local prediction', mot_tracker.debug_history_locpred[frame - 1])
                 cv2.imshow('debug, after update', mot_tracker.debug_history_afterupdate[frame - 1])
+
+                key = cv2.waitKey(0)
+                if key == ord('.'): # next
+                    if frame < num_frames:
+                        frame += 1
+                elif key == ord(','): # prev
+                    if frame > 1:
+                        frame -= 1
+                if key == ord('s') or key == ord('q'):
+                    cv2.destroyAllWindows()
+                    break
 
         else:
             with open(os.path.join(output_dir, '%s.txt'%(seq)),'w') as out_file:

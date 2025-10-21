@@ -96,7 +96,13 @@ class Sort(object):
             'cascaded': self.associate_cascaded,
             'byte': self.associate_byte
         }
-        self.association_strategy = association_fn_lookup[tracker_config['strategy']]
+        report_and_remove_fn_lookup = {
+            'sort': self.report_and_remove_sort,
+            'custom': self.report_and_remove
+        }
+        self.association_strategy = association_fn_lookup[tracker_config['association_strategy']]
+        self.report_and_remove_strategy = report_and_remove_fn_lookup[tracker_config['report_and_remove_strategy']]
+        
         self.cost_matrix_type = tracker_config["cost_matrix_type"]
         self.max_time_since_update = tracker_config['max_time_since_update']                                    # track deletion threshold
         self.max_time_since_detected = tracker_config['max_time_since_detected']    # track deletion threshold    
@@ -196,22 +202,7 @@ class Sort(object):
                                             debug="liveness update, trkid{}".format(self.trackers[i].id))
                     # print(self.trackers[i].get_state() + self.trackers[i].dcf.predicted_displacement)
 
-        i = len(self.trackers)
-        for trk in reversed(self.trackers):
-            trk_state = trk.tracker_state
-            d = trk.get_state()
-            if (
-                trk.time_since_update <= self.max_time_since_update_to_report
-                # and (trk.detection_hit_streak >= self.min_hit_streak or self.frame_count <= self.min_hit_streak)
-                and trk.time_since_detected <= self.max_time_since_detected_to_report
-                and trk.tracker_state == TrackerState.CONFIRMED
-            ):
-                ret.append(np.concatenate((d,[trk.id+1])).reshape(1,-1)) # +1 as MOT benchmark requires positive
-            i -= 1
-            # remove dead tracklet
-            if trk_state == TrackerState.FOR_TERMINATION:
-            # if (trk.time_since_update > self.max_time_since_update) or (trk.time_since_detected > self.max_time_since_detected):
-                self.trackers.pop(i)
+        ret = self.report_and_remove_strategy()
 
         if debug:
             vis_img = draw_frame_info(debug_img, self.trackers, dets, self.frame_count, dcf=self.use_dcf, scale=self.debug_vis_scale)
@@ -230,6 +221,50 @@ class Sort(object):
                 to_del.append(t)
         for t in reversed(to_del):
             self.trackers.pop(t)
+
+
+    def report_and_remove(self):
+        ret = []
+        i = len(self.trackers)
+        for trk in reversed(self.trackers):
+            trk_state = trk.tracker_state
+            d = trk.get_state()
+            if (
+                trk.time_since_update <= self.max_time_since_update_to_report
+                # and (trk.detection_hit_streak >= self.min_hit_streak or self.frame_count <= self.min_hit_streak)
+                and trk.time_since_detected <= self.max_time_since_detected_to_report
+                and trk.tracker_state == TrackerState.CONFIRMED
+            ):
+                ret.append(np.concatenate((d,[trk.id+1])).reshape(1,-1)) # +1 as MOT benchmark requires positive
+            i -= 1
+            # remove dead tracklet
+            if trk_state == TrackerState.FOR_TERMINATION:
+            # if (trk.time_since_update > self.max_time_since_update) or (trk.time_since_detected > self.max_time_since_detected):
+                self.trackers.pop(i)
+
+        return ret
+    
+
+    def report_and_remove_sort(self):
+        ret = []
+        i = len(self.trackers)
+        for trk in reversed(self.trackers):
+            trk_state = trk.tracker_state
+            d = trk.get_state()
+            if (
+                trk.time_since_update <= self.max_time_since_update_to_report
+                and (trk.detection_hit_streak >= self.min_hit_streak or self.frame_count <= self.min_hit_streak)
+                and trk.time_since_detected <= self.max_time_since_detected_to_report
+                # and trk.tracker_state == TrackerState.CONFIRMED
+            ):
+                ret.append(np.concatenate((d,[trk.id+1])).reshape(1,-1)) # +1 as MOT benchmark requires positive
+            i -= 1
+            # remove dead tracklet
+            if trk_state == TrackerState.FOR_TERMINATION:
+            # if (trk.time_since_update > self.max_time_since_update) or (trk.time_since_detected > self.max_time_since_detected):
+                self.trackers.pop(i)
+
+        return ret
 
     
     def compute_dcf_cost_matrix(self, scaled_dets, trackers, features, iou_matrix, debug):

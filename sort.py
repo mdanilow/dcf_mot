@@ -37,13 +37,16 @@ from scipy.optimize import linear_sum_assignment
 import lap
 import json
 
-from utils import draw_bboxes, scale_coords, draw_frame_info
+from utils import draw_bboxes, scale_coords, draw_frame_info, fuse_score
 from box_tracker import KalmanBoxTracker, TrackerState
 
 np.random.seed(0)
 
 
 def linear_assignment(cost_matrix, cost_limit=None, rows_indices=None, cols_indices=None):
+    if cost_matrix.size == 0:
+        return np.empty(shape=(0, 2))
+
     if rows_indices is not None and cols_indices is not None:
         if len(rows_indices) == 0 or len(cols_indices) == 0:
             return np.empty(shape=(0, 2))
@@ -98,7 +101,8 @@ class Sort(object):
         }
         report_and_remove_fn_lookup = {
             'sort': self.report_and_remove_sort,
-            'custom': self.report_and_remove
+            'custom': self.report_and_remove,
+            'byte': self.report_and_remove_byte
         }
         self.association_strategy = association_fn_lookup[tracker_config['association_strategy']]
         self.report_and_remove_strategy = report_and_remove_fn_lookup[tracker_config['report_and_remove_strategy']]
@@ -145,6 +149,8 @@ class Sort(object):
         NOTE: The number of objects returned may differ from the number of detections provided.
         """
         ret = []
+        activated_trackers = []
+        refound_trackers = []
         self.frame_count += 1
         KalmanBoxTracker.frame_count = self.frame_count
         if debug:
@@ -165,7 +171,7 @@ class Sort(object):
         else:
             scaled_dets = None
 
-        matched, unmatched_dets, unmatched_trks = self.association_strategy(dets,
+        matched, unmatched_dets, unmatched_trks, fused_cost_matrix = self.association_strategy(dets,
                                                                     self.trackers,
                                                                     features=features,
                                                                     scaled_dets=scaled_dets,
@@ -173,19 +179,42 @@ class Sort(object):
 
         # update matched trackers with assigned detections
         for m in matched:
-            bbox = dets[m[0], :]
             scaled_bbox = None if scaled_dets is None else scaled_dets[m[0], :]
-            self.trackers[m[1]].update(bbox, features=features, features_bbox=scaled_bbox, detected=True)
+            self.trackers[m[1]].update(detection=dets[m[0], :], features=features, features_bbox=scaled_bbox, detected=True)
+            if self.trackers[m[1]].exp_tracker_state == TrackerState.CONFIRMED:
+                activated_trackers.append(m[1])
+            else:
+                refound_trackers.append(m[1])
+        for i in unmatched_trks:
+            self.trackers[i].exp_tracker_state = TrackerState.LOST
+
+        # deal with uncertain tracks and init new tracks
+        unconfirmed_trks = [i for i in range(len(self.trackers)) if not self.trackers[i].is_activated]
+        matches = linear_assignment(cost_matrix=fused_cost_matrix,
+                                    cost_limit=0.7,
+                                    rows_indices=unmatched_dets,
+                                    cols_indices=unconfirmed_trks)
+        for m in matches:
+            scaled_bbox = None if scaled_dets is None else scaled_dets[m[0], :]
+            self.trackers[m[1]].update(detection=dets[m[0], :], features=features, features_bbox=scaled_bbox, detected=True)
+            activated_trackers.append(m[1])
+        unmatched = [i for i in unconfirmed_trks if i not in matches[:, 1]]
+        for i in unmatched:
+            self.trackers[i].exp_tracker_state == TrackerState.FOR_TERMINATION
 
         # create and initialize new trackers for unmatched detections
+        unmatched_dets = [i for i in unmatched_dets if i not in matches[:, 0]]
         for i in unmatched_dets:
-            if dets[i, 4] >= self.det_score_high_th:
+            if dets[i, 4] >= self.det_score_high_th + 0.1:
                 trk = KalmanBoxTracker(bbox=dets[i, :],
                                     dcf_config=self.dcf_config,
                                     img_shape=self.img_shape,
                                     features=features,
                                     features_bbox=None if scaled_dets is None else scaled_dets[i, :],
                                     debug="init_from_det{}".format(i) if debug else None)
+                trk.exp_tracker_state = TrackerState.CONFIRMED
+                if self.frame_count == 1:
+                    trk.is_activated = True
                 self.trackers.append(trk)
 
         # check liveness of unmatched trackers
@@ -216,11 +245,30 @@ class Sort(object):
     def local_prediction(self, features=None, debug=None):
         to_del = []
         for t, trk in enumerate(self.trackers):
-            pos = self.trackers[t].predict(features, debug="predict_trkid{}".format(trk.id) if debug else None)[0]
-            if np.any(np.isnan(pos)):
-                to_del.append(t)
-        for t in reversed(to_del):
-            self.trackers.pop(t)
+            if self.trackers[t].exp_tracker_state in [TrackerState.CONFIRMED, TrackerState.LOST]:
+                pos = self.trackers[t].predict(features, debug="predict_trkid{}".format(trk.id) if debug else None)[0]
+        #     if np.any(np.isnan(pos)):
+        #         to_del.append(t)
+        # for t in reversed(to_del):
+        #     self.trackers.pop(t)
+
+
+    def report_and_remove_byte(self):
+        ret = []
+        i = len(self.trackers)
+        for trk in reversed(self.trackers):
+            d = trk.get_state()
+            if trk.exp_tracker_state == TrackerState.CONFIRMED and trk.is_activated:
+                ret.append(np.concatenate((d,[trk.id+1])).reshape(1,-1)) # +1 as MOT benchmark requires positive
+            elif trk.exp_tracker_state == TrackerState.LOST and (trk.time_since_detected > self.max_time_since_detected):
+                trk.exp_tracker_state = TrackerState.FOR_TERMINATION
+            i -= 1
+            # remove dead tracklet
+            if trk.exp_tracker_state == TrackerState.FOR_TERMINATION:
+            # if (trk.time_since_update > self.max_time_since_update) or (trk.time_since_detected > self.max_time_since_detected):
+                self.trackers.pop(i)
+
+        return ret
 
 
     def report_and_remove(self):
@@ -435,12 +483,8 @@ class Sort(object):
         """
         Assigns detections to tracked object (both represented as bounding boxes)
 
-        Returns 3 lists of matches, unmatched_detections and unmatched_trackers
+        Returns matches, unmatched_detections, unmatched_trackers and cost matrix fused with det scores
         """
-        if(len(trackers)==0):
-            return np.empty((0,2),dtype=int), np.arange(len(detections)), np.empty((0,5),dtype=int)
-        trackers_bboxes = np.stack([np.squeeze(t.get_state()) for t in trackers])
-        iou_matrix = iou_batch(detections, trackers_bboxes)
         # print("dets:", detections)
         scores = detections[:, 4]
         # print("scores:", scores)
@@ -449,68 +493,52 @@ class Sort(object):
         low_det_indices = [i for i in range(len(detections))
                             if scores[i] > self.det_score_low_th and scores[i] < self.det_score_high_th]
         high_det_indices = [i for i in range(len(detections))
-                            if scores[i] >= self.det_score_high_th]
+                            if scores[i] > self.det_score_high_th]
         # print('scores lo:', low_det_indices)
         # print('scores hi:', high_det_indices)
+        if len(trackers) == 0:
+            return np.empty((0, 2), dtype=int), high_det_indices, [], np.empty((len(detections), 0))
+        trackers_bboxes = np.stack([np.squeeze(t.get_state()) for t in trackers])
+        iou_matrix = iou_batch(detections, trackers_bboxes)
 
-        if min(iou_matrix.shape) > 0:
-            # a = (iou_matrix > self.iou_threshold).astype(np.int32)
-            # if a.sum(1).max() == 1 and a.sum(0).max() == 1:
-            #     matched_indices = np.stack(np.where(a), axis=1)
-            #     print('dupa')
-            # else:
-            # DCF matrix
-            if self.cost_matrix_type == "dcf":
-                cost_matrix = self.compute_dcf_cost_matrix(scaled_dets, trackers, features, iou_matrix, debug=debug)
-                cost_matrix = np.where(iou_matrix <= self.iou_threshold, 1e+5, cost_matrix)
-            else:
-                cost_matrix = 1 - iou_matrix
-            # print('\tjaja')
-            # first association with high detections:
-            tracker_indices_to_match = [i for i in range(len(trackers))]
-            matched_indices_high = linear_assignment(cost_matrix,
-                                                    cost_limit=self.max_association_cost,
-                                                    rows_indices=high_det_indices,
-                                                    cols_indices=tracker_indices_to_match)
-            
-            # second association with low detections:
-            tracker_indices_to_match = [i for i in range(len(trackers))
-                                        if i not in matched_indices_high[:, 1]]
-            # matched_indices_low = np.empty(shape=(0,2))
-            matched_indices_low = linear_assignment(cost_matrix,
-                                                    cost_limit=self.max_association_cost,
-                                                    rows_indices=low_det_indices,
-                                                    cols_indices=tracker_indices_to_match)
-            matched_indices = np.concatenate([matched_indices_high, matched_indices_low], axis=0)
-            matched_indices = matched_indices.astype(int)
+        # DCF matrix
+        if self.cost_matrix_type == "dcf":
+            cost_matrix = self.compute_dcf_cost_matrix(scaled_dets, trackers, features, iou_matrix, debug=debug)
+            cost_matrix = np.where(iou_matrix <= self.iou_threshold, 1e+5, cost_matrix)
         else:
-            matched_indices = np.empty(shape=(0,2))
+            cost_matrix = 1 - iou_matrix
+            cost_matrix = fuse_score(cost_matrix, detections)
+        # first association with high detections:
+        tracker_indices_to_match = [i for i in range(len(trackers))
+                                    if trackers[i].is_activated or trackers[i].exp_tracker_state == TrackerState.LOST]
+        matched_indices_high = linear_assignment(cost_matrix,
+                                                cost_limit=self.max_association_cost,
+                                                rows_indices=high_det_indices,
+                                                cols_indices=tracker_indices_to_match)
+        
+        # second association with low detections:
+        tracker_indices_to_match = [i for i in tracker_indices_to_match
+                                    if (i not in matched_indices_high[:, 1] and trackers[i].exp_tracker_state == TrackerState.CONFIRMED)]
+        matched_indices_low = linear_assignment(cost_matrix,
+                                                cost_limit=0.5,
+                                                rows_indices=low_det_indices,
+                                                cols_indices=tracker_indices_to_match)
+        matched_indices = np.concatenate([matched_indices_high, matched_indices_low], axis=0)
+        matched_indices = matched_indices.astype(int)
 
         unmatched_detections = []
         for d in high_det_indices:
             if(d not in matched_indices[:, 0]):
-                closest_track_iou = np.max(iou_matrix[d])
-                if closest_track_iou < self.max_iou_for_new_target:
-                    unmatched_detections.append(d)
+                # closest_track_iou = np.max(iou_matrix[d])
+                # if closest_track_iou < self.max_iou_for_new_target:
+                unmatched_detections.append(d)
 
         unmatched_trackers = []
-        for t, trk in enumerate(trackers):
-            if(t not in matched_indices[:,1]):
-                unmatched_trackers.append(t)
-        #filter out matched with low IOU
-        matches = []
-        for m in matched_indices:
-            if(iou_matrix[m[0], m[1]] < self.iou_threshold):
-                unmatched_detections.append(m[0])
-                unmatched_trackers.append(m[1])
-            else:
-                matches.append(m.reshape(1,2))
-        if(len(matches)==0):
-            matches = np.empty((0,2),dtype=int)
-        else:
-            matches = np.concatenate(matches,axis=0)
+        for i in tracker_indices_to_match:
+            if(i not in matched_indices[:, 1]):
+                unmatched_trackers.append(i)
 
-        return matched_indices, np.array(unmatched_detections), np.array(unmatched_trackers)
+        return matched_indices, unmatched_detections, unmatched_trackers, cost_matrix
 
 
 def parse_args():

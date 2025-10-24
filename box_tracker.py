@@ -12,9 +12,8 @@ from utils import draw_bboxes, scale_coords, draw_text_line
 class TrackerState(Enum):
     UNCERTAIN = 0
     CONFIRMED = 1
-    ACTIVE = 2
-    OCCLUDED = 3
-    FOR_TERMINATION = 4
+    LOST = 2
+    FOR_TERMINATION = 3
 
 
 def convert_bbox_to_z(bbox):
@@ -81,6 +80,10 @@ class KalmanBoxTracker(object):
         self.predict_dcf_liveness = KalmanBoxTracker.tracker_config['predict_dcf_liveness']
 
         self.__tracker_state = TrackerState.UNCERTAIN
+        self.exp_tracker_state = TrackerState.UNCERTAIN
+        self.is_activated = False
+        self.is_occluded = False
+        self.time_occluded = 0
 
         if dcf_config is not None and features is not None and features_bbox is not None:
             self.dcf = DCF(dcf_config, img_shape, features, features_bbox, debug=debug)
@@ -109,16 +112,22 @@ class KalmanBoxTracker(object):
                 self.__tracker_state = TrackerState.FOR_TERMINATION
         return self.__tracker_state
 
-    def update(self, bbox, features=None, features_bbox=None, detected=False, debug=None):
+    def update(self, detection, features=None, features_bbox=None, detected=False, debug=None):
         """
         Updates the state vector with observed bbox.
         """
+        self.is_activated = True
+        self.is_occluded = False
+        self.time_occluded = 0
+        self.exp_tracker_state == TrackerState.CONFIRMED
+        self.score = detection[4]
+
         self.time_since_update = 0
         self.history = []
         self.hits += 1
         self.hit_streak += 1
         # if not self.dcf_config['predict_position']:
-        self.kf.update(convert_bbox_to_z(bbox))
+        self.kf.update(convert_bbox_to_z(detection[:4]))
         if detected:
             self.time_since_detected = 0
             self.detection_hit_streak += 1

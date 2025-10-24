@@ -116,3 +116,16 @@ def scale_coords(img1_shape, coords, img0_shape, ratio_pad=None):
     coords[:, :4] /= gain
     clip_coords(coords, img0_shape)
     return coords
+
+
+# cost_matrix is in format [detections x trackers]
+# detections in format [x, y, w, h, score]
+def fuse_score(cost_matrix, detections):
+    if cost_matrix.size == 0:
+        return cost_matrix
+    iou_sim = 1 - cost_matrix
+    det_scores = detections[:, 4]
+    det_scores = np.expand_dims(det_scores, axis=1).repeat(cost_matrix.shape[1], axis=1)
+    fuse_sim = iou_sim * det_scores
+    fuse_cost = 1 - fuse_sim
+    return fuse_cost

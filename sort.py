@@ -40,6 +40,8 @@ import json
 from utils import draw_bboxes, scale_coords, draw_frame_info
 from box_tracker import KalmanBoxTracker, TrackerState
 
+from fasttracker.fasttracker import Fasttracker
+
 np.random.seed(0)
 
 
@@ -543,6 +545,9 @@ if __name__ == '__main__':
     tracker_config = config["tracker_config"]
     dcf_config = config["dcf_config"]
     use_dcf = dcf_config['use_conv_features'] != -1
+    meta_tracker = config["meta_tracker"]
+    tracker_class = eval(meta_tracker)
+    print('Meta tracker:', meta_tracker)
     print('Tracker config:')
     print(tracker_config)
     if use_dcf:
@@ -567,11 +572,11 @@ if __name__ == '__main__':
             img_shape = cv2.imread(join(args.debug_images, seq, 'img1', '%06d.jpg'%(1))).shape
         else:
             img_shape = None
-        mot_tracker = Sort(tracker_config=tracker_config,
-                            dcf_config=dcf_config if use_dcf else None,
-                            img_shape=img_shape,
-                            debug_vis_scale=args.debug_vis_scale,
-                            det_score_division=args.det_score_division) #create instance of the SORT tracker
+        mot_tracker = tracker_class(tracker_config=tracker_config,
+                                    dcf_config=dcf_config if use_dcf else None,
+                                    img_shape=img_shape,
+                                    debug_vis_scale=args.debug_vis_scale,
+                                    det_score_division=args.det_score_division)
         seq_dets = np.loadtxt(join(args.seq_path, phase, seq, 'det', 'det.txt'), delimiter=',')
         seq_features_dir = join(args.seq_path, phase, seq, 'features')
 
@@ -592,8 +597,8 @@ if __name__ == '__main__':
                     mot_tracker.update(dets, features=frame_features, debug_img=debug_img, debug=args.debug)
                 
                 cv2.imshow('debug, iteration start', mot_tracker.debug_history_itstart[frame - 1])
-                cv2.imshow('debug, local prediction', mot_tracker.debug_history_locpred[frame - 1])
-                cv2.imshow('debug, after update', mot_tracker.debug_history_afterupdate[frame - 1])
+                # cv2.imshow('debug, local prediction', mot_tracker.debug_history_locpred[frame - 1])
+                cv2.imshow('{}, after update'.format(seq), mot_tracker.debug_history_afterupdate[frame - 1])
 
                 key = cv2.waitKey(0)
                 if key == ord('.'): # next
@@ -636,7 +641,6 @@ if __name__ == '__main__':
                     for d in trackers:
                         print('%d,%d,%.2f,%.2f,%.2f,%.2f,1,-1,-1,-1'%(frame,d[4],d[0],d[1],d[2]-d[0],d[3]-d[1]),file=out_file)
 
-        print('Max dcf response in sequence:', mot_tracker.max_dcf_response)
         if key == ord('q'):
             break
         

@@ -1,4 +1,5 @@
 {
+    "meta_tracker": "Sort",
     "tracker_config": {
         "association_strategy": "simple",
         "report_and_remove_strategy": "custom",

@@ -87,6 +87,52 @@ def draw_frame_info(img, trackers, detections, frame_number, scale=2, dcf=False)
     return img
 
 
+def draw_frame_info_byte(img, trackers, lost_trackers, detections, frame_number, scale=1, dcf=False):
+    img = img.copy()
+    trackers_bboxes = np.array([t.tlwh for t in trackers]) if trackers else np.empty(shape=(0,4), dtype=int)
+    lost_trackers_bboxes = np.array([t.tlwh for t in lost_trackers]) if lost_trackers else np.empty(shape=(0,4), dtype=int)
+    detections = detections.copy()
+    if detections.size == 0:
+        detections = np.empty(shape=(0, 5), dtype=int)
+    trackers_bboxes = trackers_bboxes.astype(float)
+    lost_trackers_bboxes = lost_trackers_bboxes.astype(float)
+    detections = detections.astype(float)
+    # if not show_conf and detections.size > 0:
+    #     detections = np.array([det[:4] for det in detections])
+    trackers_bboxes[:, :4] *= scale
+    lost_trackers_bboxes[:, :4] *= scale
+    detections[:, :4] *= scale
+
+    detections_info = {"idx": list(range(detections.shape[0])),
+                       "conf": ["{:.2f}".format(d) for d in detections[:, 4]]}
+    trackers_info = {"id": [t.track_id for t in trackers],
+                     "Ac": [t.is_activated for t in trackers],
+                     }
+    lost_trackers_info = {"id": [t.track_id for t in lost_trackers],
+                        "Ac": [t.is_activated for t in lost_trackers],
+                        }
+    if dcf:
+        dcf_info = {"psr": ["{:.1f}".format(t.dcf.psr) for t in trackers],
+                    "m_res": ["{:.2f}".format(t.dcf.max_response) for t in trackers],
+                    "sinc_det": [t.time_since_detected for t in trackers],
+                    "d_hitstr": [t.detection_hit_streak for t in trackers]}
+        lost_dcf_info = {"psr": ["{:.1f}".format(t.dcf.psr) for t in lost_trackers],
+                    "m_res": ["{:.2f}".format(t.dcf.max_response) for t in lost_trackers],
+                    "sinc_det": [t.time_since_detected for t in lost_trackers],
+                    "d_hitstr": [t.detection_hit_streak for t in lost_trackers]}
+        trackers_info.update(dcf_info)
+        lost_trackers_info.update(lost_dcf_info)
+    if scale != 1:
+        img = cv2.resize(img, (0, 0), fx=scale, fy=scale)
+    draw_text_line(img, "Tracks", line=0, color=(255, 0, 0))
+    draw_text_line(img, "Detections", line=1, color=(0, 0, 255))
+    draw_text_line(img, "Frame: " + str(frame_number), line=2, color=(0, 255, 0))
+    draw_bboxes(img, lost_trackers_bboxes, xywh_layout=True, color=(0, 255, 255), label_position="under", info_dict=lost_trackers_info)
+    draw_bboxes(img, trackers_bboxes, xywh_layout=True, color=(0, 255, 0), label_position="under", info_dict=trackers_info)
+    draw_bboxes(img, detections, color=(0, 0, 255), info_dict=detections_info)
+    return img
+
+
 def clip_coords(boxes, img_shape):
     # Clip bounding xyxy bounding boxes to image shape (height, width)
     if isinstance(boxes, np.ndarray):

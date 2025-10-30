@@ -238,7 +238,7 @@ class DCF():
         dy /= self.y_scale
         # scale from features dimension to image dimension
         displacement = scale_coords(features.shape[2:], np.array([[dx, dy, dx, dy]]), self.img_shape)[0]
-        self.predicted_displacement = displacement
+        self.predicted_displacement = displacement[:2]
 
         if debug is not None:
             debug_response = ((response - np.min(response)) / (np.max(response) - np.min(response))) * 255
@@ -325,16 +325,21 @@ class DCF():
         elif self.crop_mode == "crop_resize":
             xmin, ymin, xmax, ymax = int(xmin), int(ymin), int(xmax), int(ymax)
             window = features[:, ymin:ymax, xmin:xmax]
+            window = window.transpose(1, 2, 0)
             window = cv2.resize(window, (self.roi_size, self.roi_size))
+            window = window.transpose(2, 0, 1)
 
         if debug is not None:
             for i in range(14, 15):
                 ch = features[i]
                 test = ((ch - np.min(ch)) / (np.max(ch) - np.min(ch))) * 255
                 test = np.stack([test] * 3, axis=2)
+                debug_window = window[i]
+                debug_window = ((debug_window - np.min(debug_window)) / (np.max(debug_window) - np.min(debug_window))) * 255
+                debug_window = np.stack([debug_window] * 3, axis=2)
                 draw_bboxes(test, np.array([[xmin, ymin, xmax, ymax]]))
                 cv2.imshow('features{} {}'.format(i, debug), test)
-                cv2.imshow('features{} window {}'.format(i, debug), window.transpose(1, 2, 0)[:, :, i])
+                cv2.imshow('features{} window {}'.format(i, debug), debug_window)
 
         return window
 

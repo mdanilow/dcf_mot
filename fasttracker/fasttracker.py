@@ -11,12 +11,14 @@ from .kalman_filter import KalmanFilter
 import fasttracker.matching as matching
 from .basetrack import BaseTrack, TrackState
 from utils import draw_frame_info_byte
-
+from box_tracker import DCF
+from utils import scale_coords
 
 
 class STrack(BaseTrack):
     shared_kalman = KalmanFilter()
-    def __init__(self, tlwh, score):
+    dcf_config = None
+    def __init__(self, tlwh, score, det_idx=None):
 
         # wait activate
         self._tlwh = np.asarray(tlwh, dtype=np.float64)
@@ -34,6 +36,9 @@ class STrack(BaseTrack):
         self.was_recently_occluded = False
         self.mean_history = []
 
+        self.dcf = None
+        self.det_idx = det_idx
+
     def predict(self):
         mean_state = self.mean.copy()
         if self.state != TrackState.Tracked:
@@ -41,19 +46,22 @@ class STrack(BaseTrack):
         self.mean, self.covariance = self.kalman_filter.predict(mean_state, self.covariance)
 
     @staticmethod
-    def multi_predict(stracks):
+    def multi_predict(stracks, features=None, debug=None):
         if len(stracks) > 0:
             multi_mean = np.asarray([st.mean.copy() for st in stracks])
             multi_covariance = np.asarray([st.covariance for st in stracks])
             for i, st in enumerate(stracks):
+                if STrack.dcf_config is not None:
+                    st.dcf.predict_displacement(features, st.tlbr, debug="predict, trkid{}".format(st.track_id))
                 if st.state != TrackState.Tracked:
                     multi_mean[i][7] = 0
             multi_mean, multi_covariance = STrack.shared_kalman.multi_predict(multi_mean, multi_covariance)
             for i, (mean, cov) in enumerate(zip(multi_mean, multi_covariance)):
                 stracks[i].mean = mean
                 stracks[i].covariance = cov
+                # stracks[i].mean[:2] = stracks[i].mean[:2] + stracks[i].dcf.predicted_displacement
 
-    def activate(self, kalman_filter, frame_id):
+    def activate(self, kalman_filter, frame_id, features=None, debug=None):
         """Start a new tracklet"""
         self.kalman_filter = kalman_filter
         self.track_id = self.next_id()
@@ -71,6 +79,13 @@ class STrack(BaseTrack):
         # self.is_activated = True
         self.frame_id = frame_id
         self.start_frame = frame_id
+
+        if STrack.dcf_config is not None:
+            self.dcf = DCF(dcf_config=STrack.dcf_config,
+                           img_shape=STrack.img_shape,
+                           features=features,
+                           bbox=scale_coords(STrack.img_shape, np.expand_dims(self.tlbr, axis=0), features.shape[2:])[0],
+                           debug=debug)
 
     def re_activate(self, new_track, frame_id, new_id=False):
         self.mean, self.covariance = self.kalman_filter.update(
@@ -205,6 +220,8 @@ class Fasttracker(object):
 
         self.frame_count = 0
         # self.args = args
+        STrack.dcf_config = dcf_config
+        STrack.img_shape = img_shape
 
         self.det_thresh = tracker_config["track_thresh"]
         self.match_thresh = tracker_config["match_thresh"]
@@ -231,6 +248,8 @@ class Fasttracker(object):
         lost_stracks = []
         removed_stracks = []
 
+        still_tracked = [] # for debug
+
         # output_results = output_results.cpu().numpy()
         if output_results.shape[1] == 5:
             scores = output_results[:, 4]
@@ -254,8 +273,8 @@ class Fasttracker(object):
 
         if len(dets) > 0:
             '''Detections'''
-            detections = [STrack(STrack.tlbr_to_tlwh(tlbr), s) for
-                          (tlbr, s) in zip(dets, scores_keep)]
+            detections = [STrack(STrack.tlbr_to_tlwh(tlbr), s, det_idx=list(range(len(remain_inds)))[i])
+                          for i, (tlbr, s) in enumerate(zip(dets, scores_keep))]
         else:
             detections = []
 
@@ -279,7 +298,7 @@ class Fasttracker(object):
         ''' Step 2: First association, with high score detection boxes'''
         strack_pool = joint_stracks(tracked_stracks, self.lost_stracks)
         # Predict the current location with KF
-        STrack.multi_predict(strack_pool)
+        STrack.multi_predict(strack_pool, features=features, debug=debug)
         dists = matching.iou_distance(strack_pool, detections)
         # if not self.args.mot20:
         dists = matching.fuse_score(dists, detections)
@@ -295,8 +314,8 @@ class Fasttracker(object):
                 track.re_activate(det, self.frame_count, new_id=False)
                 refind_stracks.append(track)
             track.is_occluded = False
-            track.not_matched =0
-            track.occluded_len =0
+            track.not_matched = 0
+            track.occluded_len = 0
 
         ''' Step 3: Second association, with low score detection boxes'''
         # association the untrack to the low score detections
@@ -306,6 +325,7 @@ class Fasttracker(object):
                           (tlbr, s) in zip(dets_second, scores_second)]
         else:
             detections_second = []
+        still_lost = [strack_pool[i] for i in u_track if strack_pool[i].state != TrackState.Tracked]
         r_tracked_stracks = [strack_pool[i] for i in u_track if strack_pool[i].state == TrackState.Tracked]
         dists = matching.iou_distance(r_tracked_stracks, detections_second)
         matches, u_track, u_detection_second = matching.linear_assignment(dists, thresh=0.5)
@@ -321,8 +341,8 @@ class Fasttracker(object):
 
             ## The tracklet is rematched with one DET, so it is not occluded    
             track.is_occluded = False
-            track.not_matched =0
-            track.occluded_len =0
+            track.not_matched = 0
+            track.occluded_len = 0
 
         ## occlusion handling version
         for it in u_track:
@@ -330,7 +350,7 @@ class Fasttracker(object):
             track.not_matched += 1
 
             # Try detecting occlusion
-            if not track.is_occluded and track.state == TrackState.Tracked:
+            if not track.is_occluded:
                 for other in activated_starcks:
                     if track.track_id == other.track_id:
                         continue
@@ -361,11 +381,6 @@ class Fasttracker(object):
                         # Dampen motion
                         track.mean[4:8] *= self.dampen_motion_occ
                         break
-
-            # Handle occlusion flags
-            # if not occluded, but LOST, reset occluded_len
-            if not track.is_occluded:
-                track.occluded_len = 0
             else:
                 track.occluded_len += 1
 
@@ -373,12 +388,11 @@ class Fasttracker(object):
                 track.was_recently_occluded = False
 
             # Finally decide whether to mark as lost
-            if track.state != TrackState.Lost:
-                if track.not_matched > 2 and (
-                    not track.is_occluded or track.occluded_len > self.active_occ_to_lost_thresh
-                ):
-                    track.mark_lost()
-                    lost_stracks.append(track)
+            if track.not_matched > 2 and (
+                not track.is_occluded or track.occluded_len > self.active_occ_to_lost_thresh
+            ):
+                track.mark_lost()
+                lost_stracks.append(track)
 
         '''Deal with unconfirmed tracks, usually tracks with only one beginning frame'''
         detections = [detections[i] for i in u_detection]
@@ -397,10 +411,7 @@ class Fasttracker(object):
 
         """ Step 4: Init new stracks (with IoU suppression) """
         # Gather active tracks *now* (already-updated ones + still-tracked ones)
-        active_now = {t.track_id: t for t in self.tracked_stracks if t.state == TrackState.Tracked}
-        for t in activated_starcks:
-            active_now[t.track_id] = t
-        active_now = list(active_now.values())
+        active_now = [t for t in self.tracked_stracks if t.state == TrackState.Tracked]
 
         init_iou_thr = getattr(self, "init_iou_suppress", None)
         if init_iou_thr is None:
@@ -423,7 +434,10 @@ class Fasttracker(object):
 
             # Only initialize if it does NOT heavily overlap an active track
             if max_iou < init_iou_thr:
-                track.activate(self.kalman_filter, self.frame_count)
+                track.activate(self.kalman_filter,
+                               self.frame_count,
+                               features=features,
+                               debug="init from det{}".format(track.det_idx) if debug is not None else None)
                 activated_starcks.append(track)
 
         """ Step 5: Update state"""

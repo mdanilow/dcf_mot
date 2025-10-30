@@ -147,7 +147,7 @@ def clip_coords(boxes, img_shape):
         boxes[:, 3].clamp_(0, img_shape[0])  # y2
 
     
-def scale_coords(img1_shape, coords, img0_shape, ratio_pad=None):
+def scale_coords_old(img1_shape, coords, img0_shape, ratio_pad=None):
     coords = copy(coords)
     # Rescale coords (xyxy) from img1_shape to img0_shape
     if ratio_pad is None:  # calculate from img0_shape
@@ -161,4 +161,18 @@ def scale_coords(img1_shape, coords, img0_shape, ratio_pad=None):
     coords[:, [1, 3]] -= pad[1]  # y padding
     coords[:, :4] /= gain
     clip_coords(coords, img0_shape)
+    return coords
+
+
+def scale_coords(img0_shape, coords, img1_shape):
+    coords = copy(coords)
+    h0, w0 = img0_shape[:2]
+    h1, w1 = img1_shape[:2]
+    # print(h0, w0, h1, w1)
+    x_gain = w1 / w0
+    y_gain = h1 / h0
+    coords[:, [0, 2]] *= x_gain
+    coords[:, [1, 3]] *= y_gain
+    clip_coords(coords, img1_shape)
+
     return coords

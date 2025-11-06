@@ -222,7 +222,7 @@ class DCF():
 
     def predict_displacement(self, features, bbox, debug=None):
         features_bbox = scale_coords(self.img_shape, np.expand_dims(bbox, axis=0), features.shape[2:])
-        response = self.compute_response(features, features_bbox[0], debug=None)
+        response = self.compute_response(features, features_bbox[0], debug=debug)
         max_value = np.max(response)
         self.max_response = max_value
         max_pos = np.where(response == max_value)

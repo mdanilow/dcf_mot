@@ -37,6 +37,7 @@ class STrack(BaseTrack):
         self.mean_history = []
 
         self.dcf = None
+        self.dcf_updated_at_frame = None
         self.det_idx = det_idx
 
     def predict(self):
@@ -51,8 +52,6 @@ class STrack(BaseTrack):
             multi_mean = np.asarray([st.mean.copy() for st in stracks])
             multi_covariance = np.asarray([st.covariance for st in stracks])
             for i, st in enumerate(stracks):
-                if STrack.dcf_config is not None:
-                    st.dcf.predict_displacement(features, st.tlbr, debug="predict, trkid{}".format(st.track_id))
                 if st.state != TrackState.Tracked:
                     multi_mean[i][7] = 0
             multi_mean, multi_covariance = STrack.shared_kalman.multi_predict(multi_mean, multi_covariance)
@@ -60,6 +59,10 @@ class STrack(BaseTrack):
                 stracks[i].mean = mean
                 stracks[i].covariance = cov
                 # stracks[i].mean[:2] = stracks[i].mean[:2] + stracks[i].dcf.predicted_displacement
+
+    def dcf_predict(self, features, debug=None):
+        if STrack.dcf_config is not None:
+            self.dcf.predict_displacement(features, self.tlbr, debug=debug)
 
     def activate(self, kalman_filter, frame_id, features=None, debug=None):
         """Start a new tracklet"""
@@ -81,13 +84,14 @@ class STrack(BaseTrack):
         self.start_frame = frame_id
 
         if STrack.dcf_config is not None:
+            self.dcf_updated_at_frame = frame_id
             self.dcf = DCF(dcf_config=STrack.dcf_config,
                            img_shape=STrack.img_shape,
                            features=features,
                            bbox=scale_coords(STrack.img_shape, np.expand_dims(self.tlbr, axis=0), features.shape[2:])[0],
                            debug=debug)
 
-    def re_activate(self, new_track, frame_id, new_id=False):
+    def re_activate(self, new_track, frame_id, new_id=False, features=None, debug=None):
         self.mean, self.covariance = self.kalman_filter.update(
             self.mean, self.covariance, self.tlwh_to_xyah(new_track.tlwh)
         )
@@ -103,7 +107,15 @@ class STrack(BaseTrack):
             self.track_id = self.next_id()
         self.score = new_track.score
 
-    def update(self, new_track, frame_id):
+        if STrack.dcf_config is not None:
+            self.dcf_updated_at_frame = frame_id
+            self.dcf.update_filter(
+                features=features,
+                bbox=scale_coords(STrack.img_shape, np.expand_dims(self.tlbr, axis=0), features.shape[2:])[0],
+                debug=debug
+            )
+
+    def update(self, new_track, frame_id, features=None, debug=None):
         """
         Update a matched track
         :type new_track: STrack
@@ -126,6 +138,14 @@ class STrack(BaseTrack):
         self.is_activated = True
 
         self.score = new_track.score
+
+        if STrack.dcf_config is not None:
+            self.dcf_updated_at_frame = frame_id
+            self.dcf.update_filter(
+                features=features,
+                bbox=scale_coords(STrack.img_shape, np.expand_dims(self.tlbr, axis=0), features.shape[2:])[0],
+                debug=debug
+            )
 
     @property
     # @jit(nopython=True)
@@ -220,6 +240,8 @@ class Fasttracker(object):
 
         self.frame_count = 0
         # self.args = args
+        self.dcf_config = dcf_config
+        self.use_dcf = dcf_config is not None
         STrack.dcf_config = dcf_config
         STrack.img_shape = img_shape
 
@@ -235,8 +257,12 @@ class Fasttracker(object):
         self.active_occ_to_lost_thresh = tracker_config["active_occ_to_lost_thresh"]
         self.init_iou_suppress = tracker_config["init_iou_suppress"]
         self.min_box_area_to_report = tracker_config["min_box_area_to_report"]
+        self.not_matched_for_lost_th = tracker_config["not_matched_for_lost_th"]
         self.kalman_filter = KalmanFilter()
 
+        # self.debug_modes = ["dcf_init", "dcf_update_det", "dcf_update_pred", "dcf_predict"]
+        # self.debug_modes = ["dcf_update_pred", "dcf_predict"]
+        self.debug_modes = ["dcf_predict"]
         self.debug_history_afterupdate = []
         self.debug_history_itstart = []
 
@@ -292,7 +318,8 @@ class Fasttracker(object):
                                             trackers=self.tracked_stracks,
                                             lost_trackers=self.lost_stracks,
                                             detections=output_results,
-                                            frame_number=self.frame_count)
+                                            frame_number=self.frame_count,
+                                            dcf=self.use_dcf)
             self.debug_history_itstart.append(vis_img)        
 
         ''' Step 2: First association, with high score detection boxes'''
@@ -308,10 +335,23 @@ class Fasttracker(object):
             track = strack_pool[itracked]
             det = detections[idet]
             if track.state == TrackState.Tracked:
-                track.update(detections[idet], self.frame_count)
+                track.update(detections[idet],
+                             self.frame_count,
+                             features=features,
+                             debug="update trkid{} with det{}".format(track.track_id, track.det_idx) if
+                                                                                                    (debug is not None and "dcf_update_det" in self.debug_modes)
+                                                                                                    else None
+        )
                 activated_starcks.append(track)
             else:
-                track.re_activate(det, self.frame_count, new_id=False)
+                track.re_activate(det,
+                                  self.frame_count,
+                                  new_id=False,
+                                  features=features,
+                                  debug="re_activate trkid{} with det{}".format(track.track_id, track.det_idx) if
+                                                                                                                                (debug is not None and "dcf_update_det" in self.debug_modes)
+                                                                                                                                else None
+                                  )
                 refind_stracks.append(track)
             track.is_occluded = False
             track.not_matched = 0
@@ -325,18 +365,41 @@ class Fasttracker(object):
                           (tlbr, s) in zip(dets_second, scores_second)]
         else:
             detections_second = []
-        still_lost = [strack_pool[i] for i in u_track if strack_pool[i].state != TrackState.Tracked]
+        # still_lost = [strack_pool[i] for i in u_track if strack_pool[i].state != TrackState.Tracked]
         r_tracked_stracks = [strack_pool[i] for i in u_track if strack_pool[i].state == TrackState.Tracked]
+        if self.use_dcf:
+            # try to recover with DCF
+            for i in u_track:
+                if strack_pool[i].state != TrackState.Tracked:
+                    strack_pool[i].dcf_predict(features, debug="predict, trkid{}".format(track.track_id) if 
+                                                                                                        (debug is not None and "dcf_predict" in self.debug_modes)
+                                                                                                        else None
+                                            )
+                    if strack_pool[i].dcf.psr >= 20:
+                        r_tracked_stracks.append(strack_pool[i])
         dists = matching.iou_distance(r_tracked_stracks, detections_second)
         matches, u_track, u_detection_second = matching.linear_assignment(dists, thresh=0.5)
         for itracked, idet in matches:
             track = r_tracked_stracks[itracked]
             det = detections_second[idet]
             if track.state == TrackState.Tracked:
-                track.update(det, self.frame_count)
+                track.update(det,
+                             self.frame_count,
+                             features=features,
+                             debug="update trkid{} with det{}".format(track.track_id, track.det_idx) if
+                                                                                                    (debug is not None and "dcf_update_det" in self.debug_modes)
+                                                                                                    else None
+        )
                 activated_starcks.append(track)
             else:
-                track.re_activate(det, self.frame_count, new_id=False)
+                track.re_activate(det,
+                                  self.frame_count,
+                                  new_id=False,
+                                  features=features,
+                                  debug="re_activate trkid{} with det{}".format(track.track_id, track.det_idx) if
+                                        (debug is not None and "dcf_update_det" in self.debug_modes)
+                                        else None
+                                 )
                 refind_stracks.append(track)
 
             ## The tracklet is rematched with one DET, so it is not occluded    
@@ -356,8 +419,9 @@ class Fasttracker(object):
                         continue
                     if not other.is_activated or other.is_occluded:
                         continue
-
                     if is_occluded_by(track.tlbr, other.tlbr):
+                        if debug is not None:
+                            print("OCCLUSION, frame {}, trkid {} occluded by trkid {}".format(self.frame_count, track.track_id, other.track_id))
                         track.is_occluded = True
                         track.occluded_len += 1
                         track.last_occluded_frame = self.frame_count
@@ -388,11 +452,33 @@ class Fasttracker(object):
                 track.was_recently_occluded = False
 
             # Finally decide whether to mark as lost
-            if track.not_matched > 2 and (
-                not track.is_occluded or track.occluded_len > self.active_occ_to_lost_thresh
-            ):
-                track.mark_lost()
-                lost_stracks.append(track)
+            # if track.not_matched > 2 and (
+            #     not track.is_occluded or track.occluded_len > self.active_occ_to_lost_thresh
+            # ):
+            if track.is_occluded:
+                if track.occluded_len > self.active_occ_to_lost_thresh:
+                    track.mark_lost()
+                    lost_stracks.append(track)
+            else:
+                if track.not_matched > self.not_matched_for_lost_th:
+                    track.mark_lost()
+                    lost_stracks.append(track)
+                elif self.use_dcf:
+                    track.dcf_predict(features, debug="predict, trkid{}".format(track.track_id) if 
+                                                                                                (debug is not None and "dcf_predict" in self.debug_modes)
+                                                                                                else None
+                    )
+                    if track.dcf.psr < 20:
+                        track.mark_lost()
+                        lost_stracks.append(track)
+                    else:
+                        track.dcf.update_filter(
+                            features=features,
+                            bbox=scale_coords(STrack.img_shape, np.expand_dims(track.tlbr, axis=0), features.shape[2:])[0],
+                            debug="update trkid{} with prediction".format(track.track_id) if
+                                                                                          (debug is not None and "dcf_update_pred" in self.debug_modes)
+                                                                                          else None
+                        )
 
         '''Deal with unconfirmed tracks, usually tracks with only one beginning frame'''
         detections = [detections[i] for i in u_detection]
@@ -401,7 +487,13 @@ class Fasttracker(object):
         dists = matching.fuse_score(dists, detections)
         matches, u_unconfirmed, u_detection = matching.linear_assignment(dists, thresh=0.7)
         for itracked, idet in matches:
-            unconfirmed[itracked].update(detections[idet], self.frame_count)
+            unconfirmed[itracked].update(detections[idet],
+                                         self.frame_count,
+                                         features=features,
+                                         debug="update trkid{} with det{}".format(track.track_id, track.det_idx) if
+                                                                                                                                    (debug is not None and "dcf_update_det" in self.debug_modes)
+                                                                                                                                    else None
+                                        )
             activated_starcks.append(unconfirmed[itracked])
         for it in u_unconfirmed:
             track = unconfirmed[it]
@@ -437,7 +529,10 @@ class Fasttracker(object):
                 track.activate(self.kalman_filter,
                                self.frame_count,
                                features=features,
-                               debug="init from det{}".format(track.det_idx) if debug is not None else None)
+                               debug="init from det{}".format(track.det_idx) if
+                                                                            (debug is not None and "dcf_init" in self.debug_modes)
+                                                                            else None
+                )
                 activated_starcks.append(track)
 
         """ Step 5: Update state"""
@@ -467,7 +562,8 @@ class Fasttracker(object):
                                             trackers=self.tracked_stracks,
                                             lost_trackers=self.lost_stracks,
                                             detections=output_results,
-                                            frame_number=self.frame_count)
+                                            frame_number=self.frame_count,
+                                            dcf=(self.dcf_config is not None))
             self.debug_history_afterupdate.append(vis_img)
         
 

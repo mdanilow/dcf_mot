@@ -106,20 +106,20 @@ def draw_frame_info_byte(img, trackers, lost_trackers, detections, frame_number,
     detections_info = {"idx": list(range(detections.shape[0])),
                        "conf": ["{:.2f}".format(d) for d in detections[:, 4]]}
     trackers_info = {"id": [t.track_id for t in trackers],
-                     "Ac": [t.is_activated for t in trackers],
+                    #  "Ac": [t.is_activated for t in trackers],
+                     "Occ": [t.is_occluded for t in trackers]
                      }
     lost_trackers_info = {"id": [t.track_id for t in lost_trackers],
-                        "Ac": [t.is_activated for t in lost_trackers],
+                        # "Ac": [t.is_activated for t in lost_trackers],
+                         "Occ": [t.is_occluded for t in trackers]
                         }
     if dcf:
         dcf_info = {"psr": ["{:.1f}".format(t.dcf.psr) for t in trackers],
-                    "m_res": ["{:.2f}".format(t.dcf.max_response) for t in trackers],
-                    "sinc_det": [t.time_since_detected for t in trackers],
-                    "d_hitstr": [t.detection_hit_streak for t in trackers]}
+                    # "m_res": ["{:.2f}".format(t.dcf.max_response) for t in trackers]
+                    }
         lost_dcf_info = {"psr": ["{:.1f}".format(t.dcf.psr) for t in lost_trackers],
-                    "m_res": ["{:.2f}".format(t.dcf.max_response) for t in lost_trackers],
-                    "sinc_det": [t.time_since_detected for t in lost_trackers],
-                    "d_hitstr": [t.detection_hit_streak for t in lost_trackers]}
+                        # "m_res": ["{:.2f}".format(t.dcf.max_response) for t in lost_trackers]
+                        }
         trackers_info.update(dcf_info)
         lost_trackers_info.update(lost_dcf_info)
     if scale != 1:

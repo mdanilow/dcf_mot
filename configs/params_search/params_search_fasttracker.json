@@ -1,0 +1,6 @@
+{
+    "tracker_config": {
+        "track_thresh": "[0.6, 0.7]",
+        "not_matched_for_lost_th": "[0, 1, 2, 3]"
+    }
+} 

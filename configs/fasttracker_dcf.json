@@ -12,7 +12,8 @@
         "active_occ_to_lost_thresh": 9,
         "init_iou_suppress": 0.8,
         "min_box_area_to_report": 100,
-        "not_matched_for_lost_th": 10
+        "not_matched_for_lost_th": 10,
+        "lost_psr_th": 20
     },
     "dcf_config": {
         "use_conv_features": 0,

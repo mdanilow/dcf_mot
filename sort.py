@@ -21,6 +21,7 @@ import os
 import sys
 from os.path import join
 from multiprocessing.pool import ThreadPool
+from copy import deepcopy
 
 import numpy as np
 import matplotlib
@@ -43,6 +44,41 @@ from box_tracker import KalmanBoxTracker, TrackerState
 from fasttracker.fasttracker import Fasttracker
 
 np.random.seed(0)
+
+
+def cartesian_product(sets):
+    result = [[]]
+
+    for set in sets:
+        temp = []
+        for t in result:
+            for element in set:
+                temp.append(t + [element])
+        result = temp
+
+    return result
+
+
+def generate_all_configs(params_search_config):
+    sets = []
+    for sub_config in params_search_config.keys(): #"tracker_config", "dcf_config" etc
+        for param in params_search_config[sub_config].keys():
+            sets.append(eval(params_search_config[sub_config][param]))
+
+    configs = []
+    permutations = cartesian_product(sets)
+    for perm in permutations:
+        new_config = {}
+        value_idx = 0
+        for sub_config in params_search_config.keys(): #"tracker_config", "dcf_config" etc
+            for param in params_search_config[sub_config].keys():
+                if sub_config not in new_config:
+                    new_config[sub_config] = {}
+                new_config[sub_config][param] = perm[value_idx]
+                value_idx += 1
+        configs.append(new_config)
+
+    return configs
 
 
 def linear_assignment(cost_matrix, cost_limit=None, rows_indices=None, cols_indices=None):
@@ -518,8 +554,8 @@ class Sort(object):
 def parse_args():
     """Parse input arguments."""
     parser = argparse.ArgumentParser(description='SORT demo')
-    parser.add_argument("--seq_path", help="Path to detections.", type=str, default='data')
-    parser.add_argument("--phase", help="Subdirectory in seq_path.", type=str, default='neweval')
+    parser.add_argument("--detections_dir", help="Path to detections.", type=str, default='data')
+    parser.add_argument("--detections", help="Subdirectory in detections_dir.", type=str, default='neweval')
     parser.add_argument("--config", help="Path to config file", type=str, default='configs/base_dcf.json')
     parser.add_argument("--output_dir", help="Path to the output dir", type=str, default="output")
     parser.add_argument("--debug_images", help="Path to directory with sequences in mot format for visualization", type=str, default="")
@@ -528,20 +564,18 @@ def parse_args():
     parser.add_argument("--name", help="experiment name in output dir", type=str, default="")
     parser.add_argument("--single_sequence", help="Run only for this sequence", type=str, default=None)
     parser.add_argument("--det_score_division", help="Divide detection scores by this much", type=float, default=1)
+    parser.add_argument("--params_search", type=str, default="", help="path to the params search config json")
     args = parser.parse_args()
     return args
 
-if __name__ == '__main__':
-    # all train
-    args = parse_args()
-    phase = args.phase
+
+def run_experiment(args, config):
+    detections = args.detections
     total_time = 0.0
     total_frames = 0
-    name = phase + "_" + args.name if args.name != "" else phase
+    name = detections + "_" + args.name if args.name != "" else detections
     output_dir = join(args.output_dir, name, 'data')
     key = None
-    with open(args.config, "r") as config_file:
-        config = json.load(config_file)
     tracker_config = config["tracker_config"]
     dcf_config = config["dcf_config"]
     use_dcf = dcf_config['use_conv_features'] != -1
@@ -564,7 +598,7 @@ if __name__ == '__main__':
     if args.single_sequence is not None and args.single_sequence != "None":
         seqnames = [args.single_sequence]
     else:
-        seqnames = os.listdir(join(args.seq_path, phase))
+        seqnames = os.listdir(join(args.detections_dir, detections))
 
     for seq in seqnames:
         print("Processing %s."%(seq))
@@ -577,8 +611,8 @@ if __name__ == '__main__':
                                     img_shape=img_shape,
                                     debug_vis_scale=args.debug_vis_scale,
                                     det_score_division=args.det_score_division)
-        seq_dets = np.loadtxt(join(args.seq_path, phase, seq, 'det', 'det.txt'), delimiter=',')
-        seq_features_dir = join(args.seq_path, phase, seq, 'features')
+        seq_dets = np.loadtxt(join(args.detections_dir, detections, seq, 'det', 'det.txt'), delimiter=',')
+        seq_features_dir = join(args.detections_dir, detections, seq, 'features')
 
         if args.debug:
             frame = 1
@@ -601,6 +635,7 @@ if __name__ == '__main__':
                 cv2.imshow('{}, after update'.format(seq), mot_tracker.debug_history_afterupdate[frame - 1])
 
                 key = cv2.waitKey(0)
+                # cv2.destroyAllWindows()
                 if key == ord('.'): # next
                     if frame < num_frames:
                         frame += 1
@@ -634,7 +669,7 @@ if __name__ == '__main__':
                         debug_img = None
 
                     start_time = time.time()
-                    trackers = mot_tracker.update(dets, features=frame_features, debug_img=debug_img, debug=args.debug)
+                    trackers = mot_tracker.update(dets, features=frame_features, debug_img=debug_img)
                     cycle_time = time.time() - start_time
                     total_time += cycle_time
 
@@ -647,3 +682,30 @@ if __name__ == '__main__':
     if not args.debug:
         print("Total Tracking took: %.3f seconds for %d frames or %.1f FPS" % (total_time, total_frames, total_frames / total_time))
 
+
+
+if __name__ == '__main__':
+    # all train
+    args = parse_args()
+    base_args = deepcopy(args)
+
+    with open(args.config, "r") as config_file:
+        base_config = json.load(config_file)
+
+    if args.params_search == "":
+        run_experiment(args, base_config)
+
+    else:
+        with open(args.params_search, "r") as config_file:
+            params_search_config = json.load(config_file)
+        exp_ind = 0
+        param_configs = generate_all_configs(params_search_config)
+        for param_config in param_configs:
+            exp_config = deepcopy(base_config)
+            for sub_config in param_config.keys():
+                exp_config[sub_config].update(param_config[sub_config])
+                print(exp_config)
+                args.output_dir = join(base_args.output_dir, base_args.name)
+                args.name = str(exp_ind)
+                run_experiment(args, exp_config)
+                exp_ind += 1

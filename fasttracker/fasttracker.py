@@ -258,6 +258,7 @@ class Fasttracker(object):
         self.init_iou_suppress = tracker_config["init_iou_suppress"]
         self.min_box_area_to_report = tracker_config["min_box_area_to_report"]
         self.not_matched_for_lost_th = tracker_config["not_matched_for_lost_th"]
+        self.lost_psr_th = tracker_config["lost_psr_th"]
         self.kalman_filter = KalmanFilter()
 
         # self.debug_modes = ["dcf_init", "dcf_update_det", "dcf_update_pred", "dcf_predict"]
@@ -375,7 +376,7 @@ class Fasttracker(object):
                                                                                                         (debug is not None and "dcf_predict" in self.debug_modes)
                                                                                                         else None
                                             )
-                    if strack_pool[i].dcf.psr >= 20:
+                    if strack_pool[i].dcf.psr >= self.lost_psr_th:
                         r_tracked_stracks.append(strack_pool[i])
         dists = matching.iou_distance(r_tracked_stracks, detections_second)
         matches, u_track, u_detection_second = matching.linear_assignment(dists, thresh=0.5)
@@ -468,7 +469,7 @@ class Fasttracker(object):
                                                                                                 (debug is not None and "dcf_predict" in self.debug_modes)
                                                                                                 else None
                     )
-                    if track.dcf.psr < 20:
+                    if track.dcf.psr < self.lost_psr_th:
                         track.mark_lost()
                         lost_stracks.append(track)
                     else:

@@ -111,7 +111,7 @@ def draw_frame_info_byte(img, trackers, lost_trackers, detections, frame_number,
                      }
     lost_trackers_info = {"id": [t.track_id for t in lost_trackers],
                         # "Ac": [t.is_activated for t in lost_trackers],
-                         "Occ": [t.is_occluded for t in trackers]
+                         "Occ": [t.is_occluded for t in lost_trackers]
                         }
     if dcf:
         dcf_info = {"psr": ["{:.1f}".format(t.dcf.psr) for t in trackers],

@@ -56,8 +56,12 @@ class STrack(BaseTrack):
                     multi_mean[i][7] = 0
             multi_mean, multi_covariance = STrack.shared_kalman.multi_predict(multi_mean, multi_covariance)
             for i, (mean, cov) in enumerate(zip(multi_mean, multi_covariance)):
-                stracks[i].mean = mean
-                stracks[i].covariance = cov
+                # detect bbox flip (negative height/wight)
+                if mean[3] < 0:
+                    stracks[i].mark_removed()
+                else:
+                    stracks[i].mean = mean
+                    stracks[i].covariance = cov
                 # stracks[i].mean[:2] = stracks[i].mean[:2] + stracks[i].dcf.predicted_displacement
 
     def dcf_predict(self, features, debug=None):
@@ -240,8 +244,11 @@ class Fasttracker(object):
 
         self.frame_count = 0
         # self.args = args
+
         self.dcf_config = dcf_config
         self.use_dcf = dcf_config is not None
+        if self.use_dcf:
+            self.lost_psr_th = dcf_config["lost_psr_th"]
         STrack.dcf_config = dcf_config
         STrack.img_shape = img_shape
 
@@ -258,12 +265,11 @@ class Fasttracker(object):
         self.init_iou_suppress = tracker_config["init_iou_suppress"]
         self.min_box_area_to_report = tracker_config["min_box_area_to_report"]
         self.not_matched_for_lost_th = tracker_config["not_matched_for_lost_th"]
-        self.lost_psr_th = tracker_config["lost_psr_th"]
         self.kalman_filter = KalmanFilter()
 
         # self.debug_modes = ["dcf_init", "dcf_update_det", "dcf_update_pred", "dcf_predict"]
         # self.debug_modes = ["dcf_update_pred", "dcf_predict"]
-        self.debug_modes = ["dcf_predict"]
+        self.debug_modes = []
         self.debug_history_afterupdate = []
         self.debug_history_itstart = []
 
@@ -372,10 +378,11 @@ class Fasttracker(object):
             # try to recover with DCF
             for i in u_track:
                 if strack_pool[i].state != TrackState.Tracked:
-                    strack_pool[i].dcf_predict(features, debug="predict, trkid{}".format(track.track_id) if 
-                                                                                                        (debug is not None and "dcf_predict" in self.debug_modes)
-                                                                                                        else None
-                                            )
+                    strack_pool[i].dcf_predict(features,
+                                               debug="predict, trkid{}".format(track.track_id) if 
+                                                    (debug is not None and "dcf_predict" in self.debug_modes)
+                                                    else None
+                    )
                     if strack_pool[i].dcf.psr >= self.lost_psr_th:
                         r_tracked_stracks.append(strack_pool[i])
         dists = matching.iou_distance(r_tracked_stracks, detections_second)
@@ -388,9 +395,9 @@ class Fasttracker(object):
                              self.frame_count,
                              features=features,
                              debug="update trkid{} with det{}".format(track.track_id, track.det_idx) if
-                                                                                                    (debug is not None and "dcf_update_det" in self.debug_modes)
-                                                                                                    else None
-        )
+                                (debug is not None and "dcf_update_det" in self.debug_modes)
+                                else None
+                )
                 activated_starcks.append(track)
             else:
                 track.re_activate(det,
@@ -421,8 +428,8 @@ class Fasttracker(object):
                     if not other.is_activated or other.is_occluded:
                         continue
                     if is_occluded_by(track.tlbr, other.tlbr):
-                        if debug is not None:
-                            print("OCCLUSION, frame {}, trkid {} occluded by trkid {}".format(self.frame_count, track.track_id, other.track_id))
+                        # if debug is not None:
+                        #     print("OCCLUSION, frame {}, trkid {} occluded by trkid {}".format(self.frame_count, track.track_id, other.track_id))
                         track.is_occluded = True
                         track.occluded_len += 1
                         track.last_occluded_frame = self.frame_count
@@ -492,9 +499,9 @@ class Fasttracker(object):
                                          self.frame_count,
                                          features=features,
                                          debug="update trkid{} with det{}".format(track.track_id, track.det_idx) if
-                                                                                                                                    (debug is not None and "dcf_update_det" in self.debug_modes)
-                                                                                                                                    else None
-                                        )
+                                            (debug is not None and "dcf_update_det" in self.debug_modes)
+                                            else None
+            )
             activated_starcks.append(unconfirmed[itracked])
         for it in u_unconfirmed:
             track = unconfirmed[it]
@@ -531,8 +538,8 @@ class Fasttracker(object):
                                self.frame_count,
                                features=features,
                                debug="init from det{}".format(track.det_idx) if
-                                                                            (debug is not None and "dcf_init" in self.debug_modes)
-                                                                            else None
+                                    (debug is not None and "dcf_init" in self.debug_modes)
+                                    else None
                 )
                 activated_starcks.append(track)
 
@@ -560,8 +567,10 @@ class Fasttracker(object):
 
         if debug:
             vis_img = draw_frame_info_byte(img=debug_img,
-                                            trackers=self.tracked_stracks,
-                                            lost_trackers=self.lost_stracks,
+                                           trackers=self.tracked_stracks,
+                                           lost_trackers=self.lost_stracks,
+                                            # trackers=[t for t in self.tracked_stracks if t.track_id == 74],
+                                            # lost_trackers=[t for t in self.lost_stracks if t.track_id == 74],
                                             detections=output_results,
                                             frame_number=self.frame_count,
                                             dcf=(self.dcf_config is not None))

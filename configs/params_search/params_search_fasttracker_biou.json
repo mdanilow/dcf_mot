@@ -1,0 +1,6 @@
+{
+    "tracker_config": {
+        "match_thresholds": "[(a, b) for a in np.linspace(0.1, 0.6, 6) for b in np.linspace(0.2, 0.7, 6) if a < b]",
+        "biou_buffer_sizes": [0.3, 0.4]
+    }
+}

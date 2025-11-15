@@ -63,14 +63,14 @@ def ious(atlbrs, btlbrs):
         return ious
 
     ious = bbox_ious(
-        np.ascontiguousarray(atlbrs, dtype=np.float64),
-        np.ascontiguousarray(btlbrs, dtype=np.float64)
+        atlbrs,
+        btlbrs
     )
 
     return ious
 
 
-def iou_distance(atracks, btracks):
+def iou_distance(atracks, btracks, biou=0):
     """
     Compute cost based on IoU
     :type atracks: list[STrack]
@@ -85,6 +85,24 @@ def iou_distance(atracks, btracks):
     else:
         atlbrs = [track.tlbr for track in atracks]
         btlbrs = [track.tlbr for track in btracks]
+    if len(atlbrs) == 0 or len(btlbrs) == 0:
+        return np.zeros((len(atlbrs), len(btlbrs)))
+    atlbrs = np.ascontiguousarray(atlbrs, dtype=np.float64)
+    btlbrs = np.ascontiguousarray(btlbrs, dtype=np.float64)
+    if biou > 0:
+        w = atlbrs[:, 2] - atlbrs[:, 0]
+        h = atlbrs[:, 3] - atlbrs[:, 1]
+        atlbrs[:, 0] -= biou * w
+        atlbrs[:, 1] -= biou * h
+        atlbrs[:, 2] += biou * w
+        atlbrs[:, 3] += biou * h
+
+        w = btlbrs[:, 2] - btlbrs[:, 0]
+        h = btlbrs[:, 3] - btlbrs[:, 1]
+        btlbrs[:, 0] -= biou * w
+        btlbrs[:, 1] -= biou * h
+        btlbrs[:, 2] += biou * w
+        btlbrs[:, 3] += biou * h
     _ious = ious(atlbrs, btlbrs)
     cost_matrix = 1 - _ious
 

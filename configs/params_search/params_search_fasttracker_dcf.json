@@ -1,6 +1,8 @@
 {
     "tracker_config": {
-        "not_matched_for_lost_th": "list(range(6, 15, 2))",
-        "lost_sr_th": "list(range(14, 26, 2))"
+        "not_matched_for_lost_th": "list(range(6, 20, 2))"
+    },
+    "dcf_config": {
+        "lost_psr_th": "list(range(14, 26, 2))"
     }
 }

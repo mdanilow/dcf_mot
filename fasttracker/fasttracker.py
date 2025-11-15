@@ -253,7 +253,7 @@ class Fasttracker(object):
         STrack.img_shape = img_shape
 
         self.det_thresh = tracker_config["track_thresh"]
-        self.match_thresh = tracker_config["match_thresh"]
+        self.match_thresholds = tracker_config["match_thresholds"]
         self.buffer_size = int(frame_rate / 30.0 * tracker_config["track_buffer"])
         self.max_time_lost = self.buffer_size
 
@@ -265,6 +265,7 @@ class Fasttracker(object):
         self.init_iou_suppress = tracker_config["init_iou_suppress"]
         self.min_box_area_to_report = tracker_config["min_box_area_to_report"]
         self.not_matched_for_lost_th = tracker_config["not_matched_for_lost_th"]
+        self.biou_buffer_sizes = tracker_config["biou_buffer_sizes"]
         self.kalman_filter = KalmanFilter()
 
         # self.debug_modes = ["dcf_init", "dcf_update_det", "dcf_update_pred", "dcf_predict"]
@@ -333,10 +334,10 @@ class Fasttracker(object):
         strack_pool = joint_stracks(tracked_stracks, self.lost_stracks)
         # Predict the current location with KF
         STrack.multi_predict(strack_pool, features=features, debug=debug)
-        dists = matching.iou_distance(strack_pool, detections)
+        dists = matching.iou_distance(strack_pool, detections, biou=self.biou_buffer_sizes[0])
         # if not self.args.mot20:
         dists = matching.fuse_score(dists, detections)
-        matches, u_track, u_detection = matching.linear_assignment(dists, thresh=self.match_thresh)
+        matches, u_track, u_detection = matching.linear_assignment(dists, thresh=self.match_thresholds[0])
 
         for itracked, idet in matches:
             track = strack_pool[itracked]
@@ -385,8 +386,8 @@ class Fasttracker(object):
                     )
                     if strack_pool[i].dcf.psr >= self.lost_psr_th:
                         r_tracked_stracks.append(strack_pool[i])
-        dists = matching.iou_distance(r_tracked_stracks, detections_second)
-        matches, u_track, u_detection_second = matching.linear_assignment(dists, thresh=0.5)
+        dists = matching.iou_distance(r_tracked_stracks, detections_second, biou=self.biou_buffer_sizes[1])
+        matches, u_track, u_detection_second = matching.linear_assignment(dists, thresh=self.match_thresholds[1])
         for itracked, idet in matches:
             track = r_tracked_stracks[itracked]
             det = detections_second[idet]

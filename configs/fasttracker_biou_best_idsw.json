@@ -2,13 +2,13 @@
     "meta_tracker": "Fasttracker",
     "tracker_config": {
         "det_conf_thresholds": [
-            0.25,
+            0.15,
             0.7
         ],
         "track_buffer": 30,
         "match_thresholds": [
-            0.9,
-            0.2777777777777778
+            0.7222222222222222,
+            0.3666666666666667
         ],
         "min_box_area": 100,
         "reset_velocity_offset_occ": 5,
@@ -20,8 +20,8 @@
         "min_box_area_to_report": 100,
         "not_matched_for_lost_th": 2,
         "biou_buffer_sizes": [
-            0.1,
-            0.3
+            0.6,
+            0.7
         ]
     },
     "dcf_config": {

@@ -87,7 +87,7 @@ def draw_frame_info(img, trackers, detections, frame_number, scale=2, dcf=False)
     return img
 
 
-def draw_frame_info_byte(img, trackers, lost_trackers, detections, frame_number, scale=1, dcf=False):
+def draw_frame_info_byte(img, trackers, lost_trackers, detections, frame_number, scale=1, dcf=False, det_conf_th=0):
     img = img.copy()
     trackers_bboxes = np.array([t.tlwh for t in trackers]) if trackers else np.empty(shape=(0,4), dtype=int)
     lost_trackers_bboxes = np.array([t.tlwh for t in lost_trackers]) if lost_trackers else np.empty(shape=(0,4), dtype=int)
@@ -102,9 +102,10 @@ def draw_frame_info_byte(img, trackers, lost_trackers, detections, frame_number,
     trackers_bboxes[:, :4] *= scale
     lost_trackers_bboxes[:, :4] *= scale
     detections[:, :4] *= scale
+    detections = np.array([det for det in detections if det[4] >= det_conf_th])
 
-    detections_info = {"idx": list(range(detections.shape[0])),
-                       "conf": ["{:.2f}".format(d) for d in detections[:, 4]]}
+    detections_info = {"idx": [idx for idx in list(range(detections.shape[0])) if detections[idx, 4] >= det_conf_th],
+                       "conf": ["{:.2f}".format(d) for d in detections[:, 4] if d >= det_conf_th]}
     trackers_info = {"id": [t.track_id for t in trackers],
                     #  "Ac": [t.is_activated for t in trackers],
                      "Occ": [t.is_occluded for t in trackers]

@@ -252,7 +252,7 @@ class Fasttracker(object):
         STrack.dcf_config = dcf_config
         STrack.img_shape = img_shape
 
-        self.det_thresh = tracker_config["track_thresh"]
+        self.det_conf_thresholds = tracker_config["det_conf_thresholds"]
         self.match_thresholds = tracker_config["match_thresholds"]
         self.buffer_size = int(frame_rate / 30.0 * tracker_config["track_buffer"])
         self.max_time_lost = self.buffer_size
@@ -295,9 +295,9 @@ class Fasttracker(object):
         # scale = min(img_size[0] / float(img_h), img_size[1] / float(img_w))
         # bboxes /= scale
 
-        remain_inds = scores > self.det_thresh
-        inds_low = scores > 0.25
-        inds_high = scores < self.det_thresh
+        remain_inds = scores > self.det_conf_thresholds[1]
+        inds_low = scores > self.det_conf_thresholds[0]
+        inds_high = scores < self.det_conf_thresholds[1]
 
         inds_second = np.logical_and(inds_low, inds_high)
         dets_second = bboxes[inds_second]
@@ -521,7 +521,7 @@ class Fasttracker(object):
 
         for inew in u_detection:
             track = detections[inew]
-            if track.score < self.det_thresh:
+            if track.score < self.det_conf_thresholds[1]:
                 continue
 
             # compute max IoU with any active track this frame
@@ -574,7 +574,8 @@ class Fasttracker(object):
                                             # lost_trackers=[t for t in self.lost_stracks if t.track_id == 74],
                                             detections=output_results,
                                             frame_number=self.frame_count,
-                                            dcf=(self.dcf_config is not None))
+                                            dcf=(self.dcf_config is not None),
+                                            det_conf_th=0.25)
             self.debug_history_afterupdate.append(vis_img)
         
 

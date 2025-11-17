@@ -42,6 +42,7 @@ from utils import draw_bboxes, scale_coords, draw_frame_info
 from box_tracker import KalmanBoxTracker, TrackerState
 
 from fasttracker.fasttracker import Fasttracker
+from fasttracker.cbiou_tracker import C_BIoUTracker
 
 np.random.seed(0)
 

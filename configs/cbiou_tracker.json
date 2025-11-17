@@ -1,0 +1,33 @@
+{
+    "meta_tracker": "C_BIoUTracker",
+    "tracker_config": {
+        "det_conf_thresholds": [0.2, 0.6],
+        "new_det_conf_th": 0.7,
+        "track_buffer": 30,
+        "match_thresholds": [0.9, 0.5],
+        "min_box_area": 100,
+        "reset_velocity_offset_occ": 5,
+        "reset_pos_offset_occ": 3,
+        "enlarge_bbox_occ": 1.1,
+        "dampen_motion_occ": 0.89,
+        "active_occ_to_lost_thresh": 9,
+        "init_iou_suppress": 9999,
+        "min_box_area_to_report": 100,
+        "not_matched_for_lost_th": 0,
+        "handle_occlusion": false,
+        "biou_buffer_sizes": [0.3, 0.4]
+    },
+    "dcf_config": {
+        "use_conv_features": -1,
+        "update_strategy": "init",
+        "roi_size": 64,
+        "sigma": 7,
+        "search_region_scale": 1,
+        "crop_mode": "roi_pool",
+        "lambd": 0.01,
+        "lr": 0.025,
+        "normalize_features": true,
+        "predict_position": false,
+        "psr_peak_crop_size": 11
+    }
+}

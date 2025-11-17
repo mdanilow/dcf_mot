@@ -148,7 +148,7 @@ def clip_coords(boxes, img_shape):
         boxes[:, 3].clamp_(0, img_shape[0])  # y2
 
     
-def scale_coords_old(img1_shape, coords, img0_shape, ratio_pad=None):
+def scale_f_coords_(img1_shape, coords, img0_shape, ratio_pad=None):
     coords = copy(coords)
     # Rescale coords (xyxy) from img1_shape to img0_shape
     if ratio_pad is None:  # calculate from img0_shape
@@ -165,6 +165,14 @@ def scale_coords_old(img1_shape, coords, img0_shape, ratio_pad=None):
     return coords
 
 
+def scale_f_coords(img1_shape, coords, img0_shape, ratio_pad=None):
+    coords = copy(coords)
+    img_h, img_w = img1_shape[0], img1_shape[1]
+    scale = min(img0_shape[0] / float(img_h), img0_shape[1] / float(img_w))
+    coords[:4] *= scale
+    return coords
+
+
 def scale_coords(img0_shape, coords, img1_shape):
     coords = copy(coords)
     h0, w0 = img0_shape[:2]
@@ -177,3 +185,16 @@ def scale_coords(img0_shape, coords, img1_shape):
     clip_coords(coords, img1_shape)
 
     return coords
+
+
+def is_outside_image(img_shape, tlbr):
+    img_h, img_w, _ = img_shape
+    if tlbr[0] > img_w:
+        return True
+    if tlbr[1] > img_h:
+        return True
+    if tlbr[2] < 0:
+        return True
+    if tlbr[3] < 0:
+        return True
+    return False

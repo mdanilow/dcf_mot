@@ -1,9 +1,15 @@
 {
     "meta_tracker": "Fasttracker",
     "tracker_config": {
-        "det_conf_thresholds": [0.1, 0.6],
+        "det_conf_thresholds": [
+            0.1,
+            0.6
+        ],
         "track_buffer": 30,
-        "match_thresholds": [0.9, 0.5],
+        "match_thresholds": [
+            0.8,
+            0.5
+        ],
         "new_det_conf_th": 0.7,
         "min_box_area": 100,
         "reset_velocity_offset_occ": 5,
@@ -11,11 +17,14 @@
         "enlarge_bbox_occ": 1.1,
         "dampen_motion_occ": 0.89,
         "active_occ_to_lost_thresh": 9,
-        "init_iou_suppress": 0.6,
+        "init_iou_suppress": 0.5,
         "min_box_area_to_report": 100,
-        "not_matched_for_lost_th": 2,
+        "not_matched_for_lost_th": 0,
         "handle_occlusion": false,
-        "biou_buffer_sizes": [0, 0]
+        "biou_buffer_sizes": [
+            0.3,
+            0.4
+        ]
     },
     "dcf_config": {
         "use_conv_features": -1,

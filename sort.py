@@ -572,6 +572,9 @@ def parse_args():
 # file with detections can start mid sequence (with first frame index > 1),
 # but the output file for eval should still be indexed from 1
 # image conv features are indexed from 0
+# handnpicked yolox feature channels: 1, 2, 11, 5, 13, 14, 15, 9, 76, 44, 19, 20, 79, 77, 69, 47, 51, 42, 25, 26, 45, 73, 49, 78, 62, 72, 52, 63
+# yolox f0 top vars: 13 42 47  5  2 69 78 43 79 36 77 50 48 74  1 46
+#  yolox f1 top vars: 50  55  90  44  73  33  78  63 106 143  84  75   8  43  22 145
 def run_experiment(args, config):
     detections = args.detections
     total_time = 0.0
@@ -626,10 +629,26 @@ def run_experiment(args, config):
                 if frame > mot_tracker.frame_count:
                     # generate new frame
                     if use_dcf:
+                        # frame_features_path = join(join(args.detections_dir, "mot17dets", seq, "features"), 'frame{}_f{}.npy'.format(frame - 1, dcf_config["use_conv_features"]))
                         frame_features_path = join(seq_features_dir, 'frame{}_f{}.npy'.format(frame - 1, dcf_config["use_conv_features"]))
-                        frame_features = np.load(frame_features_path)
+                        frame_features = np.load(frame_features_path).astype(np.float32)
+                        frame_features = frame_features[:, :16]
                     else:
                         frame_features = None
+
+                    # variances = []
+                    # for i in range(frame_features.shape[1]):
+                    #     print(i)
+                    #     ch = frame_features[0, i]
+                    #     variances.append(np.var(ch))
+                    #     test = ((ch - np.min(ch)) / (np.max(ch) - np.min(ch))) * 255
+                    #     test = np.stack([test] * 3, axis=2)
+                    #     cv2.imshow(str(i), test.astype(np.uint8))
+                    # print(variances)
+                    # print(np.argsort(variances))
+
+                    # cv2.waitKey(0)
+
                     dets = seq_dets[seq_dets[:, 0] == (frame), 2:7]
                     dets[:, 2:4] += dets[:, 0:2] #convert to [x1,y1,w,h] to [x1,y1,x2,y2]
                     debug_img = cv2.imread(join(args.debug_images, seq, 'img1', '%06d.jpg'%(frame)))
@@ -656,8 +675,10 @@ def run_experiment(args, config):
                 pbar = tqdm(range(first_frame_id - 1, int(seq_dets[:,0].max())))
                 for frame in pbar:
                     if use_dcf:
+                        # frame_features_path = join(join(args.detections_dir, "mot17dets", seq, "features"), 'frame{}_f{}.npy'.format(frame - 1, dcf_config["use_conv_features"]))
                         frame_features_path = join(seq_features_dir, 'frame{}_f{}.npy'.format(frame, dcf_config["use_conv_features"]))
-                        frame_features = np.load(frame_features_path)
+                        frame_features = np.load(frame_features_path).astype(np.float32)
+                        frame_features = frame_features[:, :16]
                     else:
                         frame_features = None
 
@@ -674,6 +695,7 @@ def run_experiment(args, config):
                     start_time = time.time()
                     trackers = mot_tracker.update(dets, features=frame_features, debug_img=debug_img)
                     cycle_time = time.time() - start_time
+                    # print('cycle time:', cycle_time)
                     total_time += cycle_time
 
                     for d in trackers:
@@ -707,8 +729,8 @@ if __name__ == '__main__':
             exp_config = deepcopy(base_config)
             for sub_config in param_config.keys():
                 exp_config[sub_config].update(param_config[sub_config])
-                print(exp_config)
-                args.output_dir = join(base_args.output_dir, base_args.name)
-                args.name = str(exp_ind)
-                run_experiment(args, exp_config)
-                exp_ind += 1
+            print(exp_config)
+            args.output_dir = join(base_args.output_dir, base_args.name)
+            args.name = str(exp_ind)
+            run_experiment(args, exp_config)
+            exp_ind += 1

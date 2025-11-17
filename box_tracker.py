@@ -338,8 +338,8 @@ class DCF():
                 debug_window = ((debug_window - np.min(debug_window)) / (np.max(debug_window) - np.min(debug_window))) * 255
                 debug_window = np.stack([debug_window] * 3, axis=2)
                 draw_bboxes(test, np.array([[xmin, ymin, xmax, ymax]]))
-                cv2.imshow('features{} {}'.format(i, debug), test)
-                cv2.imshow('features{} window {}'.format(i, debug), debug_window)
+                cv2.imshow('features{} {}'.format(i, debug), test.astype(np.uint8))
+                cv2.imshow('features{} window {}'.format(i, debug), debug_window.astype(np.uint8))
 
         return window
 

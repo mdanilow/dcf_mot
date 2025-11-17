@@ -2,6 +2,7 @@
     "meta_tracker": "Fasttracker",
     "tracker_config": {
         "det_conf_thresholds": [0.25, 0.7],
+        "new_det_conf_th": 0.7,
         "track_buffer": 30,
         "match_thresholds": [0.85, 0.5],
         "min_box_area": 100,
@@ -13,6 +14,7 @@
         "init_iou_suppress": 0.8,
         "min_box_area_to_report": 100,
         "not_matched_for_lost_th": 2,
+        "handle_occlusion": true,
         "biou_buffer_sizes": [0, 0]
     },
     "dcf_config": {

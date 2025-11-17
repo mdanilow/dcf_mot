@@ -15,6 +15,8 @@ from torchvision.ops import nms
 Because the paper drops Kalman so we rewrite the STrack class and rename it as C_BIoUSTrack
 """
 class C_BIoUSTrack(BaseTrack):
+    b1 = 0.3
+    b2 = 0.5
     def __init__(self, cls, tlwh, score) -> None:
         """
         cls: category of this obj 
@@ -34,7 +36,7 @@ class C_BIoUSTrack(BaseTrack):
         self.time_since_update = 0  # \delta in paper, use to calculate motion state
         
         # params in motion state
-        self.b1, self.b2, self.n = 0.3, 0.5, 5
+        self.n = 5
         self.origin_bbox_buffer = deque()  # a deque store the original bbox(tlwh) from t - self.n to t, where t is the last time detected
         self.origin_bbox_buffer.append(self._tlwh)
         # buffered bbox, two buffer sizes
@@ -228,6 +230,8 @@ class C_BIoUTracker(BaseTracker):
         self.max_time_lost = self.buffer_size
 
         self.min_box_area_to_report = tracker_config["min_box_area_to_report"]
+        self.init_iou_suppress = tracker_config["init_iou_suppress"]
+        self.new_det_conf_th = tracker_config["new_det_conf_th"]
 
         self.kalman = None  # The paper drops Kalman Filter so we donot use it
 
@@ -330,11 +334,30 @@ class C_BIoUTracker(BaseTracker):
             removed_stracks.append(track)
 
         # new tracks
-        for idx in u_dets_unconfirmed_idx:
-            det = u_dets1[idx]
-            if det.score > self.det_thresh + 0.1:
-                det.activate(self.frame_count)
-                activated_starcks.append(det)
+        active_now = [t for t in self.tracked_stracks if t.state == TrackState.Tracked]
+        # for idx in u_dets_unconfirmed_idx:
+        #     det = u_dets1[idx]
+        #     if det.score > self.det_thresh + 0.1:
+        #         det.activate(self.frame_count)
+        #         activated_starcks.append(det)
+        for inew in u_dets_unconfirmed_idx:
+            track = u_dets1[inew]
+            if track.score < self.new_det_conf_th:
+                continue
+
+            # compute max IoU with any active track this frame
+            det_box = track.tlbr
+            max_iou = 0.0
+            for at in active_now:
+                at_box = at.tlbr  # already tlbr
+                max_iou = max(max_iou, _iou(det_box, at_box))
+                if max_iou >= self.init_iou_suppress:
+                    break
+
+            # Only initialize if it does NOT heavily overlap an active track
+            if max_iou < self.init_iou_suppress:
+                track.activate(self.frame_count)
+                activated_starcks.append(track)
 
         """ Step 4. deal with rest tracks"""
         for u_track in u_tracks1:
@@ -375,6 +398,20 @@ class C_BIoUTracker(BaseTracker):
                     output.append(np.array([t.tlwh[0], t.tlwh[1], t.tlwh[0] + t.tlwh[2], t.tlwh[1] + t.tlwh[3], t.track_id]))
 
         return output 
+    
+
+def _iou(a, b):
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    inter_x1, inter_y1 = max(ax1, bx1), max(ay1, by1)
+    inter_x2, inter_y2 = min(ax2, bx2), min(ay2, by2)
+    iw, ih = max(0.0, inter_x2 - inter_x1), max(0.0, inter_y2 - inter_y1)
+    inter = iw * ih
+    if inter == 0:
+        return 0.0
+    area_a = (ax2 - ax1) * (ay2 - ay1)
+    area_b = (bx2 - bx1) * (by2 - by1)
+    return inter / (area_a + area_b - inter + 1e-9)
 
 
 def joint_stracks(tlista, tlistb):

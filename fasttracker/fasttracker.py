@@ -279,9 +279,8 @@ class Fasttracker(object):
         self.kalman_filter = KalmanFilter()
 
         # self.debug_modes = ["dcf_init", "dcf_update_det", "dcf_update_pred", "dcf_predict"]
-        # self.debug_modes = ["dcf_update_det", "dcf_update_pred", "dcf_predict"]
-        self.debug_modes = ["dcf_update_pred", "dcf_predict"]
-        # self.debug_modes = []
+        # self.debug_modes = ["dcf_update_pred", "dcf_predict"]
+        self.debug_modes = []
         self.debug_history_afterupdate = []
         self.debug_history_itstart = []
 
@@ -391,7 +390,6 @@ class Fasttracker(object):
             # try to recover with DCF
             for i in u_track:
                 if strack_pool[i].state != TrackState.Tracked:
-                    # print("is outside id:",strack_pool[i].track_id, strack_pool[i].tlbr, is_outside_image(STrack.img_shape, strack_pool[i].tlbr), strack_pool[i].state)
                     strack_pool[i].dcf_predict(features,
                                                debug="predict, trkid{}".format(track.track_id) if 
                                                     (debug is not None and "dcf_predict" in self.debug_modes)
@@ -429,80 +427,12 @@ class Fasttracker(object):
             track.not_matched = 0
             track.occluded_len = 0
 
-        ## occlusion handling version
-        for it in u_track:
-            track = r_tracked_stracks[it]
-            track.not_matched += 1
-            if self.handle_occlusion:
-                # Try detecting occlusion
-                if not track.is_occluded:
-                    for other in activated_starcks:
-                        if track.track_id == other.track_id:
-                            continue
-                        if not other.is_activated or other.is_occluded:
-                            continue
-                        if is_occluded_by(track.tlbr, other.tlbr):
-                            # if debug is not None:
-                            #     print("OCCLUSION, frame {}, trkid {} occluded by trkid {}".format(self.frame_count, track.track_id, other.track_id))
-                            track.is_occluded = True
-                            track.occluded_len += 1
-                            track.last_occluded_frame = self.frame_count
-                            track.was_recently_occluded = True
-
-                            # Reset velocity
-                            if len(track.mean_history) >= self.reset_velocity_offset_occ:
-                                old_mean = track.mean_history[-self.reset_velocity_offset_occ]
-                                track.mean[4:8] = old_mean[4:8]
-
-                            # Reset position
-                            if len(track.mean_history) >= self.reset_pos_offset_occ:
-                                old_mean = track.mean_history[-self.reset_pos_offset_occ]
-                                track.mean[0:4] = old_mean[0:4]
-
-                            # Enlarge once
-                            if track.occluded_len == 1:
-                                track.mean[3] *= self.enlarge_bbox_occ  # increase height
-                                # track.mean[2] = track.mean[2] / track.mean[3]  # adjust aspect ratio
-
-                            # Dampen motion
-                            track.mean[4:8] *= self.dampen_motion_occ
-                            break
-                else:
-                    track.occluded_len += 1
-
-                if track.was_recently_occluded and (self.frame_count - track.last_occluded_frame > 40):
-                    track.was_recently_occluded = False
-
-                # Finally decide whether to mark as lost
-                # if track.not_matched > 2 and (
-                #     not track.is_occluded or track.occluded_len > self.active_occ_to_lost_thresh
-                # ):
-                if track.is_occluded:
-                    if track.occluded_len > self.active_occ_to_lost_thresh:
-                        track.mark_lost()
-                        lost_stracks.append(track)
-                else:
-                    if track.not_matched > self.not_matched_for_lost_th:
-                        track.mark_lost()
-                        lost_stracks.append(track)
-                    elif self.use_dcf:
-                        track.dcf_predict(features, debug="predict, trkid{}".format(track.track_id) if 
-                            (debug is not None and "dcf_predict" in self.debug_modes)
-                            else None
-                        )
-                        if track.dcf.psr < self.lost_psr_th:
-                            track.mark_lost()
-                            lost_stracks.append(track)
-                        else:
-                            track.dcf.update_filter(
-                                features=features,
-                                bbox=scale_f_coords(STrack.img_shape, np.expand_dims(track.tlbr, axis=0), features.shape[2:])[0],
-                                debug="update trkid{} with prediction".format(track.track_id) if
-                                    (debug is not None and "dcf_update_pred" in self.debug_modes)
-                                    else None
-                            )
-            # don't handle occlusion
-            else:
+        if self.handle_occlusion:
+            self.occlusion_handling(u_track, r_tracked_stracks, activated_starcks, lost_stracks, features)
+        else:
+            for it in u_track:
+                track = r_tracked_stracks[it]
+                track.not_matched += 1
                 if track.not_matched > self.not_matched_for_lost_th:
                     track.mark_lost()
                     lost_stracks.append(track)
@@ -522,6 +452,7 @@ class Fasttracker(object):
                                 (debug is not None and "dcf_update_pred" in self.debug_modes)
                                 else None
                         )
+
 
         '''Deal with unconfirmed tracks, usually tracks with only one beginning frame'''
         detections = [detections[i] for i in u_detection]
@@ -550,11 +481,6 @@ class Fasttracker(object):
         # Gather active tracks *now* (already-updated ones + still-tracked ones)
         active_now = [t for t in self.tracked_stracks if t.state == TrackState.Tracked]
 
-        init_iou_thr = getattr(self, "init_iou_suppress", None)
-        if init_iou_thr is None:
-            print("Warn, init not found")
-            init_iou_thr = 0.8
-
         for inew in u_detection:
             track = detections[inew]
             if track.score < self.new_det_conf_th:
@@ -566,11 +492,11 @@ class Fasttracker(object):
             for at in active_now:
                 at_box = at.tlbr  # already tlbr
                 max_iou = max(max_iou, _iou(det_box, at_box))
-                if max_iou >= init_iou_thr:
+                if max_iou >= self.init_iou_suppress:
                     break
 
             # Only initialize if it does NOT heavily overlap an active track
-            if max_iou < init_iou_thr:
+            if max_iou < self.init_iou_suppress:
                 track.activate(self.kalman_filter,
                                self.frame_count,
                                features=features,
@@ -606,14 +532,15 @@ class Fasttracker(object):
             vis_img = draw_frame_info_byte(img=debug_img,
                                            trackers=self.tracked_stracks,
                                            lost_trackers=self.lost_stracks,
-                                            # trackers=[t for t in self.tracked_stracks if t.track_id in tracked_and_occluded],
-                                            # lost_trackers=[t for t in self.lost_stracks if t.track_id in lost_and_occluded],
+                                            # trackers=[t for t in self.tracked_stracks if t.track_id == 74],
+                                            # lost_trackers=[t for t in self.lost_stracks if t.track_id == 74],
                                             detections=output_results,
                                             frame_number=self.frame_count,
                                             dcf=(self.dcf_config is not None),
                                             det_conf_th=self.det_conf_thresholds[0])
             self.debug_history_afterupdate.append(vis_img)
         
+
         # get scores of lost tracks
         # output_stracks = [track for track in self.tracked_stracks if track.is_activated]
         output = [np.array([t.tlwh[0], t.tlwh[1], t.tlwh[0] + t.tlwh[2], t.tlwh[1] + t.tlwh[3], t.track_id]) for t in self.tracked_stracks if t.is_activated]
@@ -625,6 +552,82 @@ class Fasttracker(object):
                     output.append(np.array([t.tlwh[0], t.tlwh[1], t.tlwh[0] + t.tlwh[2], t.tlwh[1] + t.tlwh[3], t.track_id]))
 
         return output
+    
+
+    # u_track - unassigned tracks id
+    # r_tracked_stracks - strack pool from 2nd assignment
+    # activated_stracks - list of stracks activated in this frame
+    # lost_stracks - list of stracks considered lost in this frame
+    # features - optional conv features for dcf
+    def occlusion_handling(self, u_track, r_tracked_stracks, activated_starcks, lost_stracks, features):
+        ## occlusion handling version
+        for it in u_track:
+            track = r_tracked_stracks[it]
+            track.not_matched += 1
+
+            # Try detecting occlusion
+            if not track.is_occluded:
+                for other in activated_starcks:
+                    if track.track_id == other.track_id:
+                        continue
+                    if not other.is_activated or other.is_occluded:
+                        continue
+                    if is_occluded_by(track.tlbr, other.tlbr):
+                        # if debug is not None:
+                        #     print("OCCLUSION, frame {}, trkid {} occluded by trkid {}".format(self.frame_count, track.track_id, other.track_id))
+                        track.is_occluded = True
+                        track.occluded_len += 1
+                        track.last_occluded_frame = self.frame_count
+                        track.was_recently_occluded = True
+
+                        # Reset velocity
+                        if len(track.mean_history) >= self.reset_velocity_offset_occ:
+                            old_mean = track.mean_history[-self.reset_velocity_offset_occ]
+                            track.mean[4:8] = old_mean[4:8]
+
+                        # Reset position
+                        if len(track.mean_history) >= self.reset_pos_offset_occ:
+                            old_mean = track.mean_history[-self.reset_pos_offset_occ]
+                            track.mean[0:4] = old_mean[0:4]
+
+                        # Enlarge once
+                        if track.occluded_len == 1:
+                            track.mean[3] *= self.enlarge_bbox_occ  # increase height
+                            # track.mean[2] = track.mean[2] / track.mean[3]  # adjust aspect ratio
+
+                        # Dampen motion
+                        track.mean[4:8] *= self.dampen_motion_occ
+                        break
+            else:
+                track.occluded_len += 1
+
+            if track.was_recently_occluded and (self.frame_count - track.last_occluded_frame > 40):
+                track.was_recently_occluded = False
+
+            if track.is_occluded:
+                if track.occluded_len > self.active_occ_to_lost_thresh:
+                    track.mark_lost()
+                    lost_stracks.append(track)
+            else:
+                if track.not_matched > self.not_matched_for_lost_th:
+                    track.mark_lost()
+                    lost_stracks.append(track)
+                elif self.use_dcf:
+                    track.dcf_predict(features, debug="predict, trkid{}".format(track.track_id) if 
+                                                                                                (debug is not None and "dcf_predict" in self.debug_modes)
+                                                                                                else None
+                    )
+                    if track.dcf.psr < self.lost_psr_th:
+                        track.mark_lost()
+                        lost_stracks.append(track)
+                    else:
+                        track.dcf.update_filter(
+                            features=features,
+                            bbox=scale_f_coords(STrack.img_shape, np.expand_dims(track.tlbr, axis=0), features.shape[2:])[0],
+                            debug="update trkid{} with prediction".format(track.track_id) if
+                                                                                          (debug is not None and "dcf_update_pred" in self.debug_modes)
+                                                                                          else None
+                        )
 
 
 def joint_stracks(tlista, tlistb):

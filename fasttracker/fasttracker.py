@@ -278,9 +278,9 @@ class Fasttracker(object):
         self.handle_occlusion = tracker_config["handle_occlusion"]
         self.kalman_filter = KalmanFilter()
 
-        # self.debug_modes = ["dcf_init", "dcf_update_det", "dcf_update_pred", "dcf_predict"]
+        self.debug_modes = ["dcf_init", "dcf_update_det", "dcf_update_pred", "dcf_predict"]
         # self.debug_modes = ["dcf_update_pred", "dcf_predict"]
-        self.debug_modes = []
+        # self.debug_modes = []
         self.debug_history_afterupdate = []
         self.debug_history_itstart = []
 
@@ -357,7 +357,7 @@ class Fasttracker(object):
                 track.update(detections[idet],
                              self.frame_count,
                              features=features,
-                             debug="update trkid{} with det{}".format(track.track_id, track.det_idx) if
+                             debug="update trkid{} with det{}".format(track.track_id, det.det_idx) if
                                 (debug is not None and "dcf_update_det" in self.debug_modes)
                                 else None
                 )
@@ -367,7 +367,7 @@ class Fasttracker(object):
                                   self.frame_count,
                                   new_id=False,
                                   features=features,
-                                  debug="re_activate trkid{} with det{}".format(track.track_id, track.det_idx) if
+                                  debug="re_activate trkid{} with det{}".format(track.track_id, det.det_idx) if
                                         (debug is not None and "dcf_update_det" in self.debug_modes)
                                         else None
                 )
@@ -386,17 +386,17 @@ class Fasttracker(object):
             detections_second = []
         # still_lost = [strack_pool[i] for i in u_track if strack_pool[i].state != TrackState.Tracked]
         r_tracked_stracks = [strack_pool[i] for i in u_track if strack_pool[i].state == TrackState.Tracked]
-        if self.use_dcf:
-            # try to recover with DCF
-            for i in u_track:
-                if strack_pool[i].state != TrackState.Tracked:
-                    strack_pool[i].dcf_predict(features,
-                                               debug="predict, trkid{}".format(track.track_id) if 
-                                                    (debug is not None and "dcf_predict" in self.debug_modes)
-                                                    else None
-                    )
-                    if strack_pool[i].dcf.psr >= self.lost_psr_th:
-                        r_tracked_stracks.append(strack_pool[i])
+        # if self.use_dcf:
+        #     # try to recover with DCF
+        #     for i in u_track:
+        #         if strack_pool[i].state != TrackState.Tracked:
+        #             strack_pool[i].dcf_predict(features,
+        #                                        debug="predict, trkid{}".format(strack_pool[i].track_id) if 
+        #                                             (debug is not None and "dcf_predict" in self.debug_modes)
+        #                                             else None
+        #             )
+        #             if strack_pool[i].dcf.psr >= self.lost_psr_th:
+        #                 r_tracked_stracks.append(strack_pool[i])
         dists = matching.iou_distance(r_tracked_stracks, detections_second, biou=self.biou_buffer_sizes[1])
         matches, u_track, u_detection_second = matching.linear_assignment(dists, thresh=self.match_thresholds[1])
         for itracked, idet in matches:
@@ -406,7 +406,7 @@ class Fasttracker(object):
                 track.update(det,
                              self.frame_count,
                              features=features,
-                             debug="update trkid{} with det{}".format(track.track_id, track.det_idx) if
+                             debug="update trkid{} with det{}".format(track.track_id, det.det_idx) if
                                 (debug is not None and "dcf_update_det" in self.debug_modes)
                                 else None
                 )
@@ -416,7 +416,7 @@ class Fasttracker(object):
                                   self.frame_count,
                                   new_id=False,
                                   features=features,
-                                  debug="re_activate trkid{} with det{}".format(track.track_id, track.det_idx) if
+                                  debug="re_activate trkid{} with det{}".format(track.track_id, det.det_idx) if
                                         (debug is not None and "dcf_update_det" in self.debug_modes)
                                         else None
                                  )
@@ -428,7 +428,7 @@ class Fasttracker(object):
             track.occluded_len = 0
 
         if self.handle_occlusion:
-            self.occlusion_handling(u_track, r_tracked_stracks, activated_starcks, lost_stracks, features)
+            self.occlusion_handling(u_track, r_tracked_stracks, activated_starcks, lost_stracks, features, debug=debug)
         else:
             for it in u_track:
                 track = r_tracked_stracks[it]
@@ -466,7 +466,7 @@ class Fasttracker(object):
             track.update(det,
                         self.frame_count,
                         features=features,
-                        debug="update trkid{} with det{}".format(track.track_id, track.det_idx) if
+                        debug="update trkid{} with det{}".format(track.track_id, det.det_idx) if
                             (debug is not None and "dcf_update_det" in self.debug_modes)
                             else None
             )
@@ -559,7 +559,7 @@ class Fasttracker(object):
     # activated_stracks - list of stracks activated in this frame
     # lost_stracks - list of stracks considered lost in this frame
     # features - optional conv features for dcf
-    def occlusion_handling(self, u_track, r_tracked_stracks, activated_starcks, lost_stracks, features):
+    def occlusion_handling(self, u_track, r_tracked_stracks, activated_starcks, lost_stracks, features=None, debug=None):
         ## occlusion handling version
         for it in u_track:
             track = r_tracked_stracks[it]

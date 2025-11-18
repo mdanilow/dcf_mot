@@ -187,6 +187,7 @@ class DCF():
         self.update_strategy = dcf_config['update_strategy']
         self.normalize_features = dcf_config['normalize_features']
         self.psr_peak_crop_size = dcf_config['psr_peak_crop_size']
+        self.resize_interp_mode = eval(dcf_config['resize_interp_mode'])
         if DCF.G is None:
             DCF.G = np.fft.fft2(self.get_gauss_response(self.roi_size))
 
@@ -326,7 +327,7 @@ class DCF():
             xmin, ymin, xmax, ymax = int(xmin), int(ymin), int(xmax), int(ymax)
             window = features[:, ymin:ymax, xmin:xmax]
             window = window.transpose(1, 2, 0)
-            window = cv2.resize(window, (self.roi_size, self.roi_size))
+            window = cv2.resize(window, (self.roi_size, self.roi_size), interpolation=self.resize_interp_mode)
             window = window.transpose(2, 0, 1)
 
         if debug is not None:
@@ -338,8 +339,8 @@ class DCF():
                 debug_window = ((debug_window - np.min(debug_window)) / (np.max(debug_window) - np.min(debug_window))) * 255
                 debug_window = np.stack([debug_window] * 3, axis=2)
                 draw_bboxes(test, np.array([[xmin, ymin, xmax, ymax]]))
-                cv2.imshow('features{} {}'.format(i, debug), test.astype(np.uint8))
-                cv2.imshow('features{} window {}'.format(i, debug), debug_window.astype(np.uint8))
+                cv2.imshow('{}'.format(debug), test.astype(np.uint8))
+                cv2.imshow('window {}'.format(debug), debug_window.astype(np.uint8))
 
         return window
 

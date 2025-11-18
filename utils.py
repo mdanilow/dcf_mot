@@ -147,30 +147,45 @@ def clip_coords(boxes, img_shape):
         boxes[:, 2].clamp_(0, img_shape[1])  # x2
         boxes[:, 3].clamp_(0, img_shape[0])  # y2
 
-    
-def scale_f_coords_(img1_shape, coords, img0_shape, ratio_pad=None):
-    coords = copy(coords)
-    # Rescale coords (xyxy) from img1_shape to img0_shape
-    if ratio_pad is None:  # calculate from img0_shape
-        gain = min(img1_shape[0] / img0_shape[0], img1_shape[1] / img0_shape[1])  # gain  = old / new
-        pad = (img1_shape[1] - img0_shape[1] * gain) / 2, (img1_shape[0] - img0_shape[0] * gain) / 2  # wh padding
-    else:
-        gain = ratio_pad[0][0]
-        pad = ratio_pad[1]
 
-    coords[:, [0, 2]] -= pad[0]  # x padding
-    coords[:, [1, 3]] -= pad[1]  # y padding
-    coords[:, :4] /= gain
-    clip_coords(coords, img0_shape)
-    return coords
+# DEPRECATED
+# def scale_f_coords(img1_shape, coords, img0_shape, ratio_pad=None):
+#     coords = copy(coords)
+#     # Rescale coords (xyxy) from img1_shape to img0_shape
+#     if ratio_pad is None:  # calculate from img0_shape
+#         gain = min(img1_shape[0] / img0_shape[0], img1_shape[1] / img0_shape[1])  # gain  = old / new
+#         pad = (img1_shape[1] - img0_shape[1] * gain) / 2, (img1_shape[0] - img0_shape[0] * gain) / 2  # wh padding
+#     else:
+#         gain = ratio_pad[0][0]
+#         pad = ratio_pad[1]
 
+#     coords[:, [0, 2]] -= pad[0]  # x padding
+#     coords[:, [1, 3]] -= pad[1]  # y padding
+#     coords[:, :4] /= gain
+#     clip_coords(coords, img0_shape)
+#     return coords
 
+# FOR YOLOX FEATURES
 def scale_f_coords(img1_shape, coords, img0_shape, ratio_pad=None):
     coords = copy(coords)
     img_h, img_w = img1_shape[0], img1_shape[1]
     scale = min(img0_shape[0] / float(img_h), img0_shape[1] / float(img_w))
     coords[:4] *= scale
     return coords
+
+# FOR YOLOv8n FEATURES
+# def scale_f_coords(img0_shape, coords, img1_shape):
+#     coords = copy(coords)
+#     h0, w0 = img0_shape[:2]
+#     h1, w1 = img1_shape[:2]
+#     # print(h0, w0, h1, w1)
+#     x_gain = w1 / w0
+#     y_gain = h1 / h0
+#     coords[:, [0, 2]] *= x_gain
+#     coords[:, [1, 3]] *= y_gain
+#     clip_coords(coords, img1_shape)
+
+#     return coords
 
 
 def scale_coords(img0_shape, coords, img1_shape):

@@ -73,7 +73,7 @@ class STrack(BaseTrack):
 
     def dcf_predict(self, features, debug=None):
         if STrack.dcf_config is not None:
-            self.dcf.predict_displacement(features, self.tlbr, debug=debug)
+            self.dcf.predict_displacement(features, self.tlbr, update_psr=True, debug=debug)
 
     def activate(self, kalman_filter, frame_id, features=None, debug=None):
         """Start a new tracklet"""
@@ -256,6 +256,9 @@ class Fasttracker(object):
         self.use_dcf = dcf_config is not None
         if self.use_dcf:
             self.lost_psr_th = dcf_config["lost_psr_th"]
+            self.use_dcf_gating = dcf_config["use_dcf_gating"]
+            self.dcf_gating_th = dcf_config["dcf_gating_th"]
+            self.dcf_gating_candidate_cost_th = dcf_config["dcf_gating_candidate_cost_th"]
         STrack.dcf_config = dcf_config
         STrack.tracker_config = tracker_config
         STrack.img_shape = img_shape
@@ -278,9 +281,9 @@ class Fasttracker(object):
         self.handle_occlusion = tracker_config["handle_occlusion"]
         self.kalman_filter = KalmanFilter()
 
-        self.debug_modes = ["dcf_init", "dcf_update_det", "dcf_update_pred", "dcf_predict"]
+        # self.debug_modes = ["dcf_init", "dcf_update_det", "dcf_update_pred", "dcf_predict"]
         # self.debug_modes = ["dcf_update_pred", "dcf_predict"]
-        # self.debug_modes = []
+        self.debug_modes = ["dcf_predict"]
         self.debug_history_afterupdate = []
         self.debug_history_itstart = []
 
@@ -332,6 +335,7 @@ class Fasttracker(object):
                 tracked_stracks.append(track)
 
         if debug:
+            print('frame:', self.frame_count)
             vis_img = draw_frame_info_byte(img=debug_img,
                                             trackers=self.tracked_stracks,
                                             lost_trackers=self.lost_stracks,
@@ -345,7 +349,13 @@ class Fasttracker(object):
         # Predict the current location with KF
         STrack.multi_predict(strack_pool, features=features, debug=debug)
         strack_pool = [track for track in strack_pool if track.state != TrackState.Removed]
-        dists = matching.iou_distance(strack_pool, detections, biou=self.biou_buffer_sizes[0])
+        if self.use_dcf and self.use_dcf_gating:
+            dists = self.dcf_gated_iou_distance(strack_pool,
+                                                detections,
+                                                features=features,
+                                                debug=debug if "dcf_gating" in self.debug_modes else None)
+        else:
+            dists = matching.iou_distance(strack_pool, detections, biou=self.biou_buffer_sizes[0])
         # if not self.args.mot20:
         dists = matching.fuse_score(dists, detections)
         matches, u_track, u_detection = matching.linear_assignment(dists, thresh=self.match_thresholds[0])
@@ -552,6 +562,29 @@ class Fasttracker(object):
                     output.append(np.array([t.tlwh[0], t.tlwh[1], t.tlwh[0] + t.tlwh[2], t.tlwh[1] + t.tlwh[3], t.track_id]))
 
         return output
+    
+
+    def dcf_gated_iou_distance(self, tracks, dets, features=None, debug=None):
+        cost_matrix = matching.iou_distance(tracks, dets, biou=self.biou_buffer_sizes[0])
+        matching.print_cost_matrix(tracks, dets, cost_matrix, masking_mode="1 or more")
+        # get candidate pairs for dcf distance testing
+        # biou_matrix = matching.iou_distance(tracks, dets, biou=self.dcf_gating_iou_buffer)
+        candidates = np.array(np.where(cost_matrix < self.dcf_gating_candidate_cost_th)).transpose()
+        # matching.print_cost_matrix(tracks, dets, biou_matrix, masking_mode="less than 1")
+        response_matrix = np.zeros(cost_matrix.shape)
+        # note: track_i != track_id and det_i != det_idx, it is local indexing only
+        for track_i, det_i in candidates:
+            _, psr = tracks[track_i].dcf.predict_displacement(features,
+                                                    dets[det_i].tlbr,
+                                                    update_psr=False,
+                                                    debug="dcf response trkid{} with det{}".format(tracks[track_i].track_id, dets[det_i].det_idx)
+                                                        if debug is not None else None)
+            response_matrix[track_i, det_i] = psr
+        matching.print_cost_matrix(tracks, dets, response_matrix, masking_mode="zeros")
+        cost_matrix = np.where(response_matrix >= self.dcf_gating_th, cost_matrix, 9999)
+        matching.print_cost_matrix(tracks, dets, cost_matrix, masking_mode="1 or more")
+
+        return cost_matrix
     
 
     # u_track - unassigned tracks id

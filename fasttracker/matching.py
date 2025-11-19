@@ -108,6 +108,26 @@ def iou_distance(atracks, btracks, biou=0):
 
     return cost_matrix
 
+
+def print_cost_matrix(tracks, dets, matrix, masking_mode=None):
+    detinfo = "   det_idx:"
+    for det in dets:
+        detinfo += "{:7d}".format(det.det_idx)
+    print(detinfo)
+    print("track_ids V")
+    for r, row in enumerate(matrix):
+        row_string = "{:11d}".format(tracks[r].track_id)
+        for value in row:
+            if masking_mode == "1 or more":
+                row_string += "{:7.2f}".format(value) if value < 1 else "   ----"
+            elif masking_mode == "zeros":
+                row_string += "{:7.2f}".format(value) if value != 0 else "   ----"
+            else:
+                row_string += "{:7.2f}".format(value)
+
+        print(row_string)
+
+
 def v_iou_distance(atracks, btracks):
     """
     Compute cost based on IoU

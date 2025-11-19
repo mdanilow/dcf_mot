@@ -6,7 +6,7 @@ import torch
 from torchvision.ops import roi_pool, roi_align
 import matplotlib.pyplot as plt
 
-from utils import draw_bboxes, scale_coords, draw_text_line
+from utils import draw_bboxes, scale_coords, scale_f_coords, draw_text_line
 
 
 class TrackerState(Enum):
@@ -222,7 +222,7 @@ class DCF():
     
 
     def predict_displacement(self, features, bbox, debug=None):
-        features_bbox = scale_coords(self.img_shape, np.expand_dims(bbox, axis=0), features.shape[2:])
+        features_bbox = scale_f_coords(self.img_shape, np.expand_dims(bbox, axis=0), features.shape[2:])
         response = self.compute_response(features, features_bbox[0], debug=debug)
         max_value = np.max(response)
         self.max_response = max_value

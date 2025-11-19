@@ -170,6 +170,13 @@ def compute_psr(x, peak_pos, peak_size):
     psr = (peak - sidelobe_mean) / sidelobe_std
 
     return psr
+
+
+def compute_apce(x, peak_pos, peak_size):
+    xmax = np.max(x)
+    xmin = np.min(x)
+    dupa = np.mean((x - xmin)**2)
+    return (xmax - xmin)**2 / dupa
     
 
 class DCF():
@@ -188,6 +195,7 @@ class DCF():
         self.normalize_features = dcf_config['normalize_features']
         self.psr_peak_crop_size = dcf_config['psr_peak_crop_size']
         self.resize_interp_mode = eval(dcf_config['resize_interp_mode'])
+        self.liveness_fn = eval(dcf_config["liveness_fn"])
         if DCF.G is None:
             DCF.G = np.fft.fft2(self.get_gauss_response(self.roi_size))
 
@@ -221,7 +229,7 @@ class DCF():
         return gi
     
 
-    def predict_displacement(self, features, bbox, debug=None):
+    def predict_displacement(self, features, bbox, update_psr=False, debug=None):
         features_bbox = scale_f_coords(self.img_shape, np.expand_dims(bbox, axis=0), features.shape[2:])
         response = self.compute_response(features, features_bbox[0], debug=debug)
         max_value = np.max(response)
@@ -230,7 +238,9 @@ class DCF():
         max_pos = (int(np.mean(max_pos[1])), int(np.mean(max_pos[0])))
 
         # compute peak-to-sidelobe ratio (psr)
-        self.psr = compute_psr(response, max_pos, self.psr_peak_crop_size)
+        psr = self.liveness_fn(response, max_pos, self.psr_peak_crop_size)
+        if update_psr:
+            self.psr = psr
 
         dx = max_pos[0] - response.shape[1] / 2
         dy = max_pos[1] - response.shape[0] / 2
@@ -248,7 +258,7 @@ class DCF():
             draw_text_line(debug_response, "psr: " + "{:.1f}".format(self.psr), offset=(2, 10), color=(0, 255, 0), font_scale=0.25)
             cv2.imshow('response {}'.format(debug), debug_response)
 
-        return displacement
+        return displacement, psr
     
 
     def update_filter(self, features, bbox, debug=None):
@@ -331,7 +341,7 @@ class DCF():
             window = window.transpose(2, 0, 1)
 
         if debug is not None:
-            for i in range(14, 15):
+            for i in range(7, 8):
                 ch = features[i]
                 test = ((ch - np.min(ch)) / (np.max(ch) - np.min(ch))) * 255
                 test = np.stack([test] * 3, axis=2)

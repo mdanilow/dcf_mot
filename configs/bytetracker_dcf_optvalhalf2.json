@@ -39,6 +39,10 @@
         "normalize_features": true,
         "predict_position": false,
         "psr_peak_crop_size": 11,
-        "lost_psr_th": 20
+        "liveness_fn": "compute_psr",
+        "lost_psr_th": 22,
+        "use_dcf_gating": false,
+        "dcf_gating_th": 10,
+        "dcf_gating_candidate_cost_th": 0.9
     }
 }

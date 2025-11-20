@@ -183,6 +183,7 @@ def compute_apce(x, peak_pos, peak_size):
 class DCF():
 
     G = None
+    hanning_window = None
 
     def __init__(self, dcf_config, img_shape, features, bbox, debug=None):
         self.img_shape = img_shape
@@ -199,6 +200,7 @@ class DCF():
         self.liveness_fn = eval(dcf_config["liveness_fn"])
         if DCF.G is None:
             DCF.G = np.fft.fft2(self.get_gauss_response(self.roi_size))
+            DCF.hanning_window = window_func_2d(self.roi_size, self.roi_size)
 
         self.init_filter(features, bbox, debug=debug)
         self.psr = -1
@@ -377,8 +379,8 @@ class DCF():
             img = img + np.min(img)
             img = img / (np.max(img) + 1e-5)
 
-        window = window_func_2d(height, width)
-        img = img * window
+        # window = window_func_2d(height, width)
+        img = img * self.hanning_window
 
         return img
     

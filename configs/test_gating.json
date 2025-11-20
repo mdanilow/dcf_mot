@@ -1,10 +1,16 @@
 {
     "meta_tracker": "Fasttracker",
     "tracker_config": {
-        "det_conf_thresholds": [0.1, 0.6],
+        "det_conf_thresholds": [
+            0.1,
+            0.6
+        ],
         "new_det_conf_th": 0.7,
         "track_buffer": 30,
-        "match_thresholds": [0.9, 0.5],
+        "match_thresholds": [
+            0.9,
+            0.5
+        ],
         "min_box_area": 100,
         "reset_velocity_offset_occ": 5,
         "reset_pos_offset_occ": 3,
@@ -13,21 +19,30 @@
         "active_occ_to_lost_thresh": 9,
         "init_iou_suppress": 0.6,
         "min_box_area_to_report": 100,
-        "not_matched_for_lost_th": 0,
+        "not_matched_for_lost_th": 6,
         "handle_occlusion": false,
-        "biou_buffer_sizes": [0, 0]
+        "biou_buffer_sizes": [
+            0,
+            0
+        ]
     },
     "dcf_config": {
-        "use_conv_features": -1,
+        "use_conv_features": 0,
         "update_strategy": "init",
         "roi_size": 64,
         "sigma": 7,
         "search_region_scale": 1,
-        "crop_mode": "roi_pool",
+        "crop_mode": "crop_resize",
+        "resize_interp_mode": "cv2.INTER_LINEAR",
         "lambd": 0.01,
         "lr": 0.025,
         "normalize_features": true,
         "predict_position": false,
-        "psr_peak_crop_size": 11
+        "psr_peak_crop_size": 11,
+        "liveness_fn": "compute_psr",
+        "lost_psr_th": 20,
+        "use_dcf_gating": true,
+        "dcf_gating_th": 10,
+        "dcf_gating_candidate_cost_th": 0.9
     }
 }

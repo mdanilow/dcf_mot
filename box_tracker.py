@@ -5,6 +5,7 @@ from filterpy.kalman import KalmanFilter
 import torch
 from torchvision.ops import roi_pool, roi_align
 import matplotlib.pyplot as plt
+import time
 
 from utils import draw_bboxes, scale_coords, scale_f_coords, draw_text_line
 
@@ -205,13 +206,17 @@ class DCF():
         # self.selfcorr = np.max(self.compute_response(features, bbox))
     
     def init_filter(self, features, bbox, debug=None):
+        # start = time.time()
         template = self.crop_search_window(bbox, features, debug=debug)
+        # crop = time.time()
         fi = self.pre_process(template)
         fftfi = np.fft.fft2(fi)
         self.Ai = DCF.G * np.conjugate(fftfi)
         self.Bi = fftfi * np.conjugate(fftfi) + self.lambd
         self.Bi = self.Bi.sum(axis=0)
         self.Hi = self.Ai / self.Bi
+        # total = time.time()
+        # print('init_filter total:', total - start, "crop:", (crop - start) * 100 / (total - start), "%")
 
     # features in CHW shape
     # bbox in format [x1,y1,x2,y2,score]
@@ -296,6 +301,7 @@ class DCF():
     # features in CHW shape
     # bbox in format [x1,y1,x2,y2,score]
     def crop_search_window(self, bbox, features, debug=None):
+        # start = time.time()
         if len(features.shape) == 4:
             features = features[0]
         xmin, ymin, xmax, ymax = bbox[:4]
@@ -314,17 +320,19 @@ class DCF():
         self.x_scale = self.roi_size / (xmax - xmin)
         self.y_scale = self.roi_size / (ymax - xmin)
 
-        x_pad = int(width * self.search_region_scale)
-        y_pad = int(height * self.search_region_scale)
-        # to HWC
-        features = features.transpose(1, 2, 0)
-        features = cv2.copyMakeBorder(features, y_pad, y_pad, x_pad, x_pad, cv2.BORDER_REFLECT)
-        xmin += x_pad
-        xmax += x_pad
-        ymin += y_pad
-        ymax += y_pad
-        # to CHW
-        features = features.transpose(2, 0, 1)
+        # pad_start = time.time()
+        # x_pad = int(width * self.search_region_scale)
+        # y_pad = int(height * self.search_region_scale)
+        # # to HWC
+        # features = features.transpose(1, 2, 0)
+        # features = cv2.copyMakeBorder(features, y_pad, y_pad, x_pad, x_pad, cv2.BORDER_REFLECT)
+        # xmin += x_pad
+        # xmax += x_pad
+        # ymin += y_pad
+        # ymax += y_pad
+        # # to CHW
+        # features = features.transpose(2, 0, 1)
+        # pad_end = time.time()
 
         box = np.array([[xmin, ymin, xmax, ymax]]).astype(float)
         # box = [int(el) for el in box]
@@ -335,10 +343,15 @@ class DCF():
             window = roi_pool(f, b, self.roi_size).numpy()[0]
         elif self.crop_mode == "crop_resize":
             xmin, ymin, xmax, ymax = int(xmin), int(ymin), int(xmax), int(ymax)
+            # print(xmin, ymin, xmax, ymax)
+            # print(features.shape)
             window = features[:, ymin:ymax, xmin:xmax]
             window = window.transpose(1, 2, 0)
             window = cv2.resize(window, (self.roi_size, self.roi_size), interpolation=self.resize_interp_mode)
             window = window.transpose(2, 0, 1)
+        # total = time.time() - start
+        # pad = pad_end - pad_start
+        # print('crop total:', total, "pad:", pad * 100 / total, "%")
 
         if debug is not None:
             for i in range(7, 8):

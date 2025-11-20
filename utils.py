@@ -89,13 +89,16 @@ def draw_frame_info(img, trackers, detections, frame_number, scale=2, dcf=False)
 
 def draw_frame_info_byte(img, trackers, lost_trackers, detections, frame_number, scale=1, dcf=False, det_conf_th=0):
     img = img.copy()
-    trackers_bboxes = np.array([t.tlwh for t in trackers]) if trackers else np.empty(shape=(0,4), dtype=int)
-    lost_trackers_bboxes = np.array([t.tlwh for t in lost_trackers]) if lost_trackers else np.empty(shape=(0,4), dtype=int)
+    trackers_bboxes = np.array([t.tlbr for t in trackers]) if trackers else np.empty(shape=(0,4), dtype=int)
+    lost_trackers_bboxes = np.array([t.tlbr for t in lost_trackers]) if lost_trackers else np.empty(shape=(0,4), dtype=int)
     detections = detections.copy()
     if detections.size == 0:
         detections = np.empty(shape=(0, 5), dtype=int)
     trackers_bboxes = trackers_bboxes.astype(float)
     lost_trackers_bboxes = lost_trackers_bboxes.astype(float)
+    clip_coords(trackers_bboxes, img.shape)
+    clip_coords(detections, img.shape)
+    clip_coords(lost_trackers_bboxes, img.shape)
     detections = detections.astype(float)
     # if not show_conf and detections.size > 0:
     #     detections = np.array([det[:4] for det in detections])
@@ -128,8 +131,8 @@ def draw_frame_info_byte(img, trackers, lost_trackers, detections, frame_number,
     draw_text_line(img, "Tracks", line=0, color=(255, 0, 0))
     draw_text_line(img, "Detections", line=1, color=(0, 0, 255))
     draw_text_line(img, "Frame: " + str(frame_number), line=2, color=(0, 255, 0))
-    draw_bboxes(img, lost_trackers_bboxes, xywh_layout=True, color=(0, 255, 255), label_position="under", info_dict=lost_trackers_info)
-    draw_bboxes(img, trackers_bboxes, xywh_layout=True, color=(0, 255, 0), label_position="under", info_dict=trackers_info)
+    draw_bboxes(img, lost_trackers_bboxes, xywh_layout=False, color=(0, 255, 255), label_position="under", info_dict=lost_trackers_info)
+    draw_bboxes(img, trackers_bboxes, xywh_layout=False, color=(0, 255, 0), label_position="under", info_dict=trackers_info)
     draw_bboxes(img, detections, color=(0, 0, 255), info_dict=detections_info)
     return img
 
@@ -137,10 +140,10 @@ def draw_frame_info_byte(img, trackers, lost_trackers, detections, frame_number,
 def clip_coords(boxes, img_shape):
     # Clip bounding xyxy bounding boxes to image shape (height, width)
     if isinstance(boxes, np.ndarray):
-        np.clip(boxes[:, 0], 0, img_shape[1])
-        np.clip(boxes[:, 1], 0, img_shape[0])
-        np.clip(boxes[:, 2], 0, img_shape[1])
-        np.clip(boxes[:, 3], 0, img_shape[0])
+        boxes[:, 0] = np.clip(boxes[:, 0], 0, img_shape[1])
+        boxes[:, 1] = np.clip(boxes[:, 1], 0, img_shape[0])
+        boxes[:, 2] = np.clip(boxes[:, 2], 0, img_shape[1])
+        boxes[:, 3] = np.clip(boxes[:, 3], 0, img_shape[0])
     else:
         boxes[:, 0].clamp_(0, img_shape[1])  # x1
         boxes[:, 1].clamp_(0, img_shape[0])  # y1
@@ -166,28 +169,29 @@ def clip_coords(boxes, img_shape):
 #     return coords
 
 # FOR YOLOX FEATURES
-# print('USING YOLOX FEATURE BBOX SCALING')
-# def scale_f_coords(img1_shape, coords, img0_shape, ratio_pad=None):
-#     coords = copy(coords)
-#     img_h, img_w = img1_shape[0], img1_shape[1]
-#     scale = min(img0_shape[0] / float(img_h), img0_shape[1] / float(img_w))
-#     coords[:4] *= scale
-#     return coords
+print('USING YOLOX FEATURE BBOX SCALING')
+def scale_f_coords(img1_shape, coords, img0_shape, ratio_pad=None):
+    coords = copy(coords)
+    img_h, img_w = img1_shape[0], img1_shape[1]
+    scale = min(img0_shape[0] / float(img_h), img0_shape[1] / float(img_w))
+    coords[:4] *= scale
+    clip_coords(coords, img0_shape)
+    return coords
 
 # FOR YOLOv8n FEATURES
-print('USING YOLOv8n FEATURE BBOX SCALING')
-def scale_f_coords(img0_shape, coords, img1_shape):
-    coords = copy(coords)
-    h0, w0 = img0_shape[:2]
-    h1, w1 = img1_shape[:2]
-    # print(h0, w0, h1, w1)
-    x_gain = w1 / w0
-    y_gain = h1 / h0
-    coords[:, [0, 2]] *= x_gain
-    coords[:, [1, 3]] *= y_gain
-    clip_coords(coords, img1_shape)
+# print('USING YOLOv8n FEATURE BBOX SCALING')
+# def scale_f_coords(img0_shape, coords, img1_shape):
+#     coords = copy(coords)
+#     h0, w0 = img0_shape[:2]
+#     h1, w1 = img1_shape[:2]
+#     # print(h0, w0, h1, w1)
+#     x_gain = w1 / w0
+#     y_gain = h1 / h0
+#     coords[:, [0, 2]] *= x_gain
+#     coords[:, [1, 3]] *= y_gain
+#     clip_coords(coords, img1_shape)
 
-    return coords
+#     return coords
 
 
 def scale_coords(img0_shape, coords, img1_shape):

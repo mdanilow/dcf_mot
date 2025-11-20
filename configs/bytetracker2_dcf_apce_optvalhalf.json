@@ -19,7 +19,7 @@
         "active_occ_to_lost_thresh": 9,
         "init_iou_suppress": 0.6,
         "min_box_area_to_report": 100,
-        "not_matched_for_lost_th": 6,
+        "not_matched_for_lost_th": 2,
         "handle_occlusion": false,
         "biou_buffer_sizes": [
             0,
@@ -39,10 +39,10 @@
         "normalize_features": true,
         "predict_position": false,
         "psr_peak_crop_size": 11,
-        "liveness_fn": "compute_psr",
-        "lost_psr_th": 22,
-        "use_dcf_gating": true,
-        "dcf_gating_th": 5,
+        "liveness_fn": "compute_apce",
+        "lost_psr_th": 30,
+        "use_dcf_gating": false,
+        "dcf_gating_th": 10,
         "dcf_gating_candidate_cost_th": 0.9
     }
 }

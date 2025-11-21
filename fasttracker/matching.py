@@ -118,7 +118,9 @@ def print_cost_matrix(tracks, dets, matrix, masking_mode=None):
     for r, row in enumerate(matrix):
         row_string = "{:11d}".format(tracks[r].track_id)
         for value in row:
-            if masking_mode == "1 or more":
+            if matrix.dtype == bool:
+                row_string += "   {}".format(value) if value else "   ----"
+            elif masking_mode == "1 or more":
                 row_string += "{:7.2f}".format(value) if value < 1 else "   ----"
             elif masking_mode == "zeros":
                 row_string += "{:7.2f}".format(value) if value != 0 else "   ----"

@@ -208,6 +208,7 @@ def scale_coords(img0_shape, coords, img1_shape):
     return coords
 
 
+# completely outside image
 def is_outside_image(img_shape, tlbr):
     img_h, img_w, _ = img_shape
     if tlbr[0] > img_w:
@@ -217,5 +218,18 @@ def is_outside_image(img_shape, tlbr):
     if tlbr[2] < 0:
         return True
     if tlbr[3] < 0:
+        return True
+    return False
+
+
+def is_touching_img_borders(img_shape, tlbr):
+    img_h, img_w, _ = img_shape
+    if tlbr[0] <= 0:
+        return True
+    if tlbr[1] <= 0:
+        return True
+    if tlbr[2] >= img_w:
+        return True
+    if tlbr[3] >= img_h:
         return True
     return False

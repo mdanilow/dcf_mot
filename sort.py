@@ -722,8 +722,16 @@ if __name__ == '__main__':
         run_experiment(args, base_config)
 
     else:
+        output_dir = join(base_args.output_dir, base_args.name)
+        if base_args.name != "" and base_args.name != "test" and os.path.exists(output_dir):
+            print('WARNING: output directory {} already exists, exiting...'.format(output_dir))
+            sys.exit()
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
         with open(args.params_search, "r") as config_file:
             params_search_config = json.load(config_file)
+        with open(join(output_dir, "params_search_config.json"), "w") as file:
+            json.dump(params_search_config, file, indent=4)
         exp_ind = 0
         param_configs = generate_all_configs(params_search_config)
         for param_config in param_configs:

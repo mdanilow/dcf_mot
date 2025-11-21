@@ -43,6 +43,7 @@
         "lost_psr_th": 30,
         "use_dcf_gating": false,
         "dcf_gating_th": 10,
+        "dcf_gating_cost_th": 0.2,
         "dcf_gating_candidate_cost_th": 0.9
     }
 }

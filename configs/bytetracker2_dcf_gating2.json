@@ -42,8 +42,8 @@
         "liveness_fn": "compute_apce",
         "lost_psr_th": 30,
         "use_dcf_gating": true,
-        "dcf_gating_th": 0,
-        "dcf_gating_cost_th": 1,
+        "dcf_gating_th": 9,
+        "dcf_gating_cost_th": 0.4,
         "dcf_gating_candidate_cost_th": 0.9
     }
 }

@@ -260,6 +260,8 @@ class Fasttracker(object):
             self.dcf_gating_th = dcf_config["dcf_gating_th"]
             self.dcf_gating_cost_th = dcf_config["dcf_gating_cost_th"]
             self.dcf_gating_candidate_cost_th = dcf_config["dcf_gating_candidate_cost_th"]
+            self.use_dcf_reid = dcf_config["use_dcf_reid"]
+            self.dcf_reid_th = dcf_config["dcf_reid_th"]
         STrack.dcf_config = dcf_config
         STrack.tracker_config = tracker_config
         STrack.img_shape = img_shape
@@ -282,9 +284,10 @@ class Fasttracker(object):
         self.handle_occlusion = tracker_config["handle_occlusion"]
         self.kalman_filter = KalmanFilter()
 
+        self.debug_modes = []
         # self.debug_modes = ["dcf_init", "dcf_update_det", "dcf_update_pred", "dcf_predict"]
         # self.debug_modes = ["dcf_update_pred", "dcf_predict"]
-        self.debug_modes = ["dcf_predict"]
+        # self.debug_modes = ["dcf_predict"]
         self.debug_history_afterupdate = []
         self.debug_history_itstart = []
 
@@ -309,7 +312,7 @@ class Fasttracker(object):
         # scale = min(img_size[0] / float(img_h), img_size[1] / float(img_w))
         # bboxes /= scale
 
-        remain_inds = scores > self.det_conf_thresholds[1]
+        remain_inds = scores > self.det_conf_thresholds[1] # list of bool values
         inds_low = scores > self.det_conf_thresholds[0]
         inds_high = scores < self.det_conf_thresholds[1]
 
@@ -321,10 +324,16 @@ class Fasttracker(object):
 
         if len(dets) > 0:
             '''Detections'''
-            detections = [STrack(STrack.tlbr_to_tlwh(tlbr), s, det_idx=list(range(len(remain_inds)))[i])
+            detections = [STrack(STrack.tlbr_to_tlwh(tlbr), s, det_idx=[idx for idx, x in enumerate(remain_inds) if x][i])
                           for i, (tlbr, s) in enumerate(zip(dets, scores_keep))]
         else:
             detections = []
+        if len(dets_second) > 0:
+            '''Detections'''
+            detections_second = [STrack(STrack.tlbr_to_tlwh(tlbr), s, det_idx=[idx for idx, x in enumerate(inds_second) if x][i]) 
+                                 for i, (tlbr, s) in enumerate(zip(dets_second, scores_second))]
+        else:
+            detections_second = []
 
         ''' Add newly detected tracklets to tracked_stracks'''
         unconfirmed = []
@@ -340,7 +349,7 @@ class Fasttracker(object):
             vis_img = draw_frame_info_byte(img=debug_img,
                                             trackers=self.tracked_stracks,
                                             lost_trackers=self.lost_stracks,
-                                            detections=output_results,
+                                            in_detections=output_results,
                                             frame_number=self.frame_count,
                                             dcf=self.use_dcf)
             self.debug_history_itstart.append(vis_img)        
@@ -389,13 +398,10 @@ class Fasttracker(object):
 
         ''' Step 3: Second association, with low score detection boxes'''
         # association the untrack to the low score detections
-        if len(dets_second) > 0:
-            '''Detections'''
-            detections_second = [STrack(STrack.tlbr_to_tlwh(tlbr), s) for
-                          (tlbr, s) in zip(dets_second, scores_second)]
-        else:
-            detections_second = []
         # still_lost = [strack_pool[i] for i in u_track if strack_pool[i].state != TrackState.Tracked]
+        # if self.use_dcf and self.use_dcf_reid:
+        #     r_tracked_stracks = [strack_pool[i] for i in u_track]
+        # else:
         r_tracked_stracks = [strack_pool[i] for i in u_track if strack_pool[i].state == TrackState.Tracked]
         # if self.use_dcf:
         #     # try to recover with DCF
@@ -445,6 +451,31 @@ class Fasttracker(object):
             track.not_matched = 0
             track.occluded_len = 0
 
+
+        # """ Step 3.5: try to re-identify lost trackers with dcf appearance"""
+        # if self.use_dcf and self.use_dcf_reid:
+        #     reid_tracks = [r_tracked_stracks[i] for i in u_track if r_tracked_stracks[i].state == TrackState.Lost]
+        #     reid_detections = [detections[i] for i in u_detection] + [detections_second[i] for i in u_detection_second]
+        #     dcf_responses = self.compute_dcf_matrix(reid_tracks, reid_detections, features=features, debug=debug)
+        #     reid_matches, reid_u_tracks, reid_u_detection = matching.linear_assignment(-dcf_responses, thresh=-self.dcf_reid_th)
+        #     u_detection = list(u_detection)
+        #     for track_i, det_i in reid_matches:
+        #         if det_i in u_detection:
+        #             u_detection.remove(det_i)
+        #         track = reid_tracks[track_i]
+        #         det = reid_detections[det_i]
+        #         track.re_activate(det,
+        #                           self.frame_count,
+        #                           new_id=False,
+        #                           features=features,
+        #                           debug="reid trkid{} with det{}".format(track.track_id, det.det_idx) if
+        #                                 (debug is not None and "dcf_update_det" in self.debug_modes)
+        #                                 else None
+        #                          )
+        #         refind_stracks.append(track)
+        #         track.not_matched = 0
+        
+        # unassigned_tracked = [r_tracked_stracks[i] for i in u_track if r_tracked_stracks[i].state == TrackState.Tracked]
         if self.handle_occlusion:
             self.occlusion_handling(u_track, r_tracked_stracks, activated_starcks, lost_stracks, features, debug=debug)
         else:
@@ -495,15 +526,33 @@ class Fasttracker(object):
             lost_stracks.append(track)
 
 
-        # """ Step 3.5: try to re-identify lost trackers with dcf appearance"""
-        # if self.use_dcf:
-        #     reid_detections = [detections[i] for i in u_detection]
-        #     dcf_responses = self.compute_dcf_matrix(self.lost_stracks, reid_detections, features=features, debug=True)
-            
+        """ Step 3.5: try to re-identify lost trackers with dcf appearance"""
+        if self.use_dcf and self.use_dcf_reid:
+            reid_tracks = [t for t in self.lost_stracks if t.state == TrackState.Lost]
+            reid_detections = [detections[i] for i in u_detection]
+            dcf_responses = self.compute_dcf_matrix(reid_tracks, reid_detections, features=features, debug=debug)
+            reid_matches, reid_u_tracks, reid_u_detection = matching.linear_assignment(-dcf_responses, thresh=-self.dcf_reid_th)
+            u_detection = list(u_detection)
+            for track_i, det_i in reid_matches:
+                if det_i in u_detection:
+                    u_detection.remove(det_i)
+                track = reid_tracks[track_i]
+                det = reid_detections[det_i]
+                track.re_activate(det,
+                                  self.frame_count,
+                                  new_id=False,
+                                  features=features,
+                                  debug="reid trkid{} with det{}".format(track.track_id, det.det_idx) if
+                                        (debug is not None and "dcf_update_det" in self.debug_modes)
+                                        else None
+                                 )
+                refind_stracks.append(track)
+                track.not_matched = 0
+
 
         """ Step 4: Init new stracks (with IoU suppression) """
         # Gather active tracks *now* (already-updated ones + still-tracked ones)
-        active_now = [t for t in self.tracked_stracks if t.state == TrackState.Tracked]
+        active_now = [t for t in (self.tracked_stracks + self.lost_stracks) if t.state == TrackState.Tracked]
 
         for inew in u_detection:
             track = detections[inew]
@@ -558,7 +607,7 @@ class Fasttracker(object):
                                            lost_trackers=self.lost_stracks,
                                             # trackers=[t for t in self.tracked_stracks if t.track_id == 74],
                                             # lost_trackers=[t for t in self.lost_stracks if t.track_id == 74],
-                                            detections=output_results,
+                                            in_detections=output_results,
                                             frame_number=self.frame_count,
                                             dcf=(self.dcf_config is not None),
                                             det_conf_th=self.det_conf_thresholds[0])
@@ -606,15 +655,20 @@ class Fasttracker(object):
     
 
     def compute_dcf_matrix(self, tracks, dets, features, debug=None):
+        iou_cost_matrix = matching.iou_distance(tracks, dets, biou=0.4)
+        # matching.print_cost_matrix(tracks, dets, iou_cost_matrix, masking_mode="1 or more")
+        candidates = np.array(np.where(iou_cost_matrix < 1)).transpose()
         response_matrix = np.zeros((len(tracks), len(dets)))
-        for t, track in enumerate(tracks):
-            for d, det in enumerate(dets):
-                _, psr = track.dcf.predict_displacement(features,
-                                                        det.tlbr,
-                                                        update_psr=False,
-                                                        debug="dcf response trkid{} with det{}".format(track.track_id, det.det_idx)
-                                                            if debug is not None else None)
-                response_matrix[t, d] = psr
+        for track_i, det_i in candidates:
+            track = tracks[track_i]
+            det = dets[det_i]
+            _, psr = track.dcf.predict_displacement(features,
+                                                    det.tlbr,
+                                                    update_psr=False,
+                                                    debug="dcf response trkid{} with det{}".format(track.track_id, det.det_idx)
+                                                        if (debug is not None and "dcf_reid" in self.debug_modes)
+                                                        else None)
+            response_matrix[track_i, det_i] = psr
         if debug is not None:
             matching.print_cost_matrix(tracks, dets, response_matrix, masking_mode="zeros")
         return response_matrix

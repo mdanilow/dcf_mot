@@ -87,13 +87,21 @@ def draw_frame_info(img, trackers, detections, frame_number, scale=2, dcf=False)
     return img
 
 
-def draw_frame_info_byte(img, trackers, lost_trackers, detections, frame_number, scale=1, dcf=False, det_conf_th=0):
+def draw_frame_info_byte(img, trackers, lost_trackers, in_detections, frame_number, scale=1, dcf=False, det_conf_th=0):
     img = img.copy()
     trackers_bboxes = np.array([t.tlbr for t in trackers]) if trackers else np.empty(shape=(0,4), dtype=int)
     lost_trackers_bboxes = np.array([t.tlbr for t in lost_trackers]) if lost_trackers else np.empty(shape=(0,4), dtype=int)
-    detections = detections.copy()
-    if detections.size == 0:
-        detections = np.empty(shape=(0, 5), dtype=int)
+    detections = in_detections.copy()
+    if type(in_detections) == np.ndarray:
+        if detections.size == 0:
+            detections = np.empty(shape=(0, 5), dtype=int)
+        else:
+            detections = np.array([det for det in detections if det[4] >= det_conf_th])
+    elif type(in_detections) == list:
+        if len(detections) == 0:
+            detections = np.empty(shape=(0, 5), dtype=int)
+        else:
+            detections = np.array([d.tlbr for d in detections if d.score >= det_conf_th])
     trackers_bboxes = trackers_bboxes.astype(float)
     lost_trackers_bboxes = lost_trackers_bboxes.astype(float)
     clip_coords(trackers_bboxes, img.shape)
@@ -105,10 +113,13 @@ def draw_frame_info_byte(img, trackers, lost_trackers, detections, frame_number,
     trackers_bboxes[:, :4] *= scale
     lost_trackers_bboxes[:, :4] *= scale
     detections[:, :4] *= scale
-    detections = np.array([det for det in detections if det[4] >= det_conf_th])
 
-    detections_info = {"idx": [idx for idx in list(range(detections.shape[0])) if detections[idx, 4] >= det_conf_th],
-                       "conf": ["{:.2f}".format(d) for d in detections[:, 4] if d >= det_conf_th]}
+    if type(in_detections) == np.ndarray:
+        detections_info = {"idx": [idx for idx in list(range(detections.shape[0])) if detections[idx, 4] >= det_conf_th],
+                        "conf": ["{:.2f}".format(d) for d in detections[:, 4] if d >= det_conf_th]}
+    else:
+        detections_info = {"idx": [d.det_idx for d in in_detections if d.score >= det_conf_th],
+                        "conf": ["{:.2f}".format(d.score) for d in in_detections if d.score >= det_conf_th]}
     trackers_info = {"id": [t.track_id for t in trackers],
                     #  "Ac": [t.is_activated for t in trackers],
                      "Occ": [t.is_occluded for t in trackers]

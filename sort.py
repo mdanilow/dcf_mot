@@ -576,6 +576,8 @@ def parse_args():
 # handnpicked yolox feature channels: 1, 2, 11, 5, 13, 14, 15, 9, 76, 44, 19, 20, 79, 77, 69, 47, 51, 42, 25, 26, 45, 73, 49, 78, 62, 72, 52, 63
 # yolox f0 top vars: 13 42 47  5  2 69 78 43 79 36 77 50 48 74  1 46
 #  yolox f1 top vars: 50  55  90  44  73  33  78  63 106 143  84  75   8  43  22 145
+# yolox f0 hand: 28, 23, 16, 11, 2, 35, 39, 43, 44, 45, 58, 63, 73, 76, 69, 25
+# ^^ best: 76, 63, 44, 25, 28, 5, 11, 23, 58
 def run_experiment(args, config):
     detections = args.detections
     total_time = 0.0
@@ -584,6 +586,7 @@ def run_experiment(args, config):
     output_dir = join(args.output_dir, name, 'data')
     key = None
     tracker_config = config["tracker_config"]
+    tracker_config_base = deepcopy(tracker_config)
     dcf_config = config["dcf_config"]
     use_dcf = dcf_config['use_conv_features'] != -1
     meta_tracker = config["meta_tracker"]
@@ -607,12 +610,37 @@ def run_experiment(args, config):
     else:
         seqnames = os.listdir(join(args.detections_dir, detections))
 
+    choosen_channels = list(range(16))
+    # choosen_channels = [28, 23, 16, 11, 2, 35, 39, 43, 44, 45, 58, 63, 73, 76, 69, 25]
+    features_channels = np.ix_([0], choosen_channels)
+
     for seq in seqnames:
         print("Processing %s."%(seq))
         if args.debug_images != "":
             img_shape = cv2.imread(join(args.debug_images, seq, 'img1', '%06d.jpg'%(1))).shape
         else:
             img_shape = None
+
+        tracker_config = deepcopy(tracker_config_base)
+        if seq == 'MOT17-06-FRCNN':
+            tracker_config["track_buffer"] = 14
+        elif seq == 'MOT17-14-FRCNN':
+            tracker_config["track_buffer"] = 25
+        else:
+            tracker_config["track_buffer"] = 30
+
+        if seq == 'MOT17-01-FRCNN':
+            tracker_config["det_conf_thresholds"][1] = 0.65
+        elif seq == 'MOT17-06-FRCNN':
+            tracker_config["det_conf_thresholds"][1] = 0.65
+        elif seq == 'MOT17-12-FRCNN':
+            tracker_config["det_conf_thresholds"][1] = 0.7
+        elif seq == 'MOT17-14-FRCNN':
+            tracker_config["det_conf_thresholds"][1] = 0.67
+        elif seq in ['MOT20-06', 'MOT20-08']:
+            tracker_config["det_conf_thresholds"][1] = 0.3
+        tracker_config["new_det_conf_th"] = tracker_config["det_conf_thresholds"][1] + 0.1
+
         mot_tracker = tracker_class(tracker_config=tracker_config,
                                     dcf_config=dcf_config if use_dcf else None,
                                     img_shape=img_shape,
@@ -633,7 +661,7 @@ def run_experiment(args, config):
                         # frame_features_path = join(join(args.detections_dir, "mot17dets", seq, "features"), 'frame{}_f{}.npy'.format(frame - 1, dcf_config["use_conv_features"]))
                         frame_features_path = join(seq_features_dir, 'frame{}_f{}.npy'.format(frame - 1, dcf_config["use_conv_features"]))
                         frame_features = np.load(frame_features_path).astype(np.float32)
-                        frame_features = frame_features[:, :16]
+                        frame_features = frame_features[features_channels]
                     else:
                         frame_features = None
 
@@ -679,7 +707,7 @@ def run_experiment(args, config):
                         # frame_features_path = join(join(args.detections_dir, "mot17dets", seq, "features"), 'frame{}_f{}.npy'.format(frame - 1, dcf_config["use_conv_features"]))
                         frame_features_path = join(seq_features_dir, 'frame{}_f{}.npy'.format(frame, dcf_config["use_conv_features"]))
                         frame_features = np.load(frame_features_path).astype(np.float32)
-                        frame_features = frame_features[:, :16]
+                        frame_features = frame_features[features_channels]
                     else:
                         frame_features = None
 

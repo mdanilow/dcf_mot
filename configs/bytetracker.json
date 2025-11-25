@@ -1,5 +1,5 @@
 {
-    "meta_tracker": "Fasttracker",
+    "meta_tracker": "BYTETracker",
     "tracker_config": {
         "det_conf_thresholds": [0.1, 0.6],
         "new_det_conf_th": 0.7,

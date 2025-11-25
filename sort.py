@@ -614,8 +614,12 @@ def run_experiment(args, config):
     choosen_channels = list(range(16))
     # choosen_channels = [28, 23, 16, 11, 2, 35, 39, 43, 44, 45, 58, 63, 73, 76, 69, 25]
     features_channels = np.ix_([0], choosen_channels)
+    plot_rows = 2
+    plot_cols = int(np.ceil(len(seqnames) / 2))
+    psr_fig, psr_ax = plt.subplots(plot_rows, plot_cols, figsize=(15, 10))
+    area_fig, area_ax = plt.subplots(plot_rows, plot_cols, figsize=(15, 10))
 
-    for seq in seqnames:
+    for seq_i, seq in enumerate(seqnames):
         print("Processing %s."%(seq))
         if args.debug_images != "":
             img_shape = cv2.imread(join(args.debug_images, seq, 'img1', '%06d.jpg'%(1))).shape
@@ -725,14 +729,20 @@ def run_experiment(args, config):
 
                     for d in trackers:
                         print('%d,%d,%.2f,%.2f,%.2f,%.2f,1,-1,-1,-1'%(frame - first_frame_id + 1,d[4],d[0],d[1],d[2]-d[0],d[3]-d[1]),file=out_file)
-                # plt.hist(mot_tracker.dcf_histogram_data)
-                # plt.show()
-                # plt.figure()
-                # plt.scatter(mot_tracker.areas_to_psr.keys(), [np.mean(val) for val in mot_tracker.areas_to_psr.values()])
-                # plt.show()
+
+        # seq_to_psr_data[seq] = mot_tracker.dcf_histogram_data
+        area_data = {k: np.mean(v) for k, v in mot_tracker.areas_to_psr.items()}
+        # seq_to_area_data[seq] = area_data
+        psr_ax[seq_i // plot_cols, seq_i % plot_cols].hist(mot_tracker.dcf_histogram_data)
+        psr_ax[seq_i // plot_cols, seq_i % plot_cols].title.set_text(seq)
+        area_ax[seq_i // plot_cols, seq_i % plot_cols].scatter(area_data.keys(), area_data.values())
+        area_ax[seq_i // plot_cols, seq_i % plot_cols].title.set_text(seq)
+        psr_fig.savefig("psr.png")
+        area_fig.savefig("area.png")
+        # plt.scatter(mot_tracker.areas_to_psr.keys(), [np.mean(val) for val in mot_tracker.areas_to_psr.values()])
         if key == ord('q'):
             break
-        
+    
     if not args.debug:
         print("Total Tracking took: %.3f seconds for %d frames or %.1f FPS" % (total_time, total_frames, total_frames / total_time))
 

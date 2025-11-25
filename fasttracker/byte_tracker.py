@@ -11,7 +11,7 @@ from .kalman_filter import KalmanFilter
 from . import matching
 from .basetrack import BaseTrack, TrackState
 from box_tracker import DCF
-from utils import scale_coords, scale_f_coords, is_outside_image, is_touching_img_borders, draw_frame_info_byte
+from utils import clip_coords, scale_coords, scale_f_coords, is_outside_image, is_touching_img_borders, draw_frame_info_byte
 
 
 class STrack(BaseTrack):
@@ -150,9 +150,13 @@ class STrack(BaseTrack):
     def area(self):
         return self.tlwh[2] * self.tlwh[3]
     
-    # @property
-    # def clipped_area(self):
-    #     tlbr = self.tlbr.copy()
+    @property
+    def clipped_area(self):
+        tlbr = self.tlbr.copy()
+        clip_coords(np.expand_dims(tlbr, axis=0), STrack.img_shape)
+        tlwh = STrack.tlbr_to_tlwh(tlbr)
+        area = tlwh[2] * tlwh[3]
+        return area
 
     @staticmethod
     # @jit(nopython=True)
@@ -298,22 +302,23 @@ class BYTETracker(object):
         ''' Step 2: First association, with high score detection boxes'''
         strack_pool = joint_stracks(tracked_stracks, self.lost_stracks)
 
-        # for track in strack_pool:
-        #     if track.state == TrackState.Removed:
-        #         print('dupa')
-        #     if track.area > 100:
-        #         # self.histogram_areas.append(track.area)
-        #         # print(track.tlbr)
-        #         track.dcf_predict(features,
-        #                         debug="predict, trkid{}".format(track.track_id) if 
-        #                             (debug is not None and "dcf_predict" in self.debug_modes)
-        #                             else None
-        #         )
-        #         if track.area in self.areas_to_psr:
-        #             self.areas_to_psr[track.area].append(track.dcf.psr)
-        #         else:
-        #             self.areas_to_psr[track.area] = [track.dcf.psr]
-        #         self.dcf_histogram_data.append(track.dcf.psr)
+        for track in strack_pool:
+            if track.state == TrackState.Removed:
+                print('dupa')
+            area = track.clipped_area
+            if area > 500:
+                # self.histogram_areas.append(track.area)
+                # print(track.tlbr)
+                track.dcf_predict(features,
+                                debug="predict, trkid{}".format(track.track_id) if 
+                                    (debug is not None and "dcf_predict" in self.debug_modes)
+                                    else None
+                )
+                if area in self.areas_to_psr:
+                    self.areas_to_psr[area].append(track.dcf.psr)
+                else:
+                    self.areas_to_psr[area] = [track.dcf.psr]
+                self.dcf_histogram_data.append(track.dcf.psr)
         # Predict the current location with KF
         STrack.multi_predict(strack_pool)
         dists = matching.iou_distance(strack_pool, detections)

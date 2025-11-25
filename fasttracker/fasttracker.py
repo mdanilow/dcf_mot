@@ -245,6 +245,7 @@ class Fasttracker(object):
                  debug_vis_scale=1,
                  det_score_division=1,
                  frame_rate=30):
+        print(tracker_config)
         self.tracked_stracks = []  # type: list[STrack]
         self.lost_stracks = []  # type: list[STrack]
         self.removed_stracks = []  # type: list[STrack]
@@ -287,9 +288,10 @@ class Fasttracker(object):
         self.debug_modes = []
         # self.debug_modes = ["dcf_init", "dcf_update_det", "dcf_update_pred", "dcf_predict"]
         # self.debug_modes = ["dcf_update_pred", "dcf_predict"]
-        # self.debug_modes = ["dcf_predict"]
+        self.debug_modes = ["dcf_init"]
         self.debug_history_afterupdate = []
         self.debug_history_itstart = []
+        self.debug_vis_scale = debug_vis_scale
 
 
     def update(self, output_results, features=None, debug_img=None, debug=None):
@@ -609,6 +611,7 @@ class Fasttracker(object):
                                             # lost_trackers=[t for t in self.lost_stracks if t.track_id == 74],
                                             in_detections=output_results,
                                             frame_number=self.frame_count,
+                                            scale=self.debug_vis_scale,
                                             dcf=(self.dcf_config is not None),
                                             det_conf_th=self.det_conf_thresholds[0])
             self.debug_history_afterupdate.append(vis_img)

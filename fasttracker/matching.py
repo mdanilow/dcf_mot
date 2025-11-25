@@ -110,6 +110,9 @@ def iou_distance(atracks, btracks, biou=0):
 
 
 def print_cost_matrix(tracks, dets, matrix, masking_mode=None):
+    if matrix.size == 0:
+        print("<empty cost matrix>")
+        return
     detinfo = "   det_idx:"
     for det in dets:
         detinfo += "{:7d}".format(det.det_idx)

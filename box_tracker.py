@@ -256,7 +256,8 @@ class DCF():
         dy /= self.y_scale
         # scale from features dimension to image dimension
         displacement = scale_coords(features.shape[2:], np.array([[dx, dy, dx, dy]]), self.img_shape)[0]
-        self.predicted_displacement = displacement[:2]
+        if update_psr:
+            self.predicted_displacement = displacement[:2]
 
         if debug is not None:
             debug_response = ((response - np.min(response)) / (np.max(response) - np.min(response))) * 255
@@ -356,7 +357,7 @@ class DCF():
         # print('crop total:', total, "pad:", pad * 100 / total, "%")
 
         if debug is not None:
-            for i in range(7, 8):
+            for i in range(11, 12):
                 ch = features[i]
                 test = ((ch - np.min(ch)) / (np.max(ch) - np.min(ch))) * 255
                 test = np.stack([test] * 3, axis=2)

@@ -5,14 +5,18 @@ import os.path as osp
 import copy
 import torch
 import torch.nn.functional as F
+import matplotlib.pyplot as plt
 
 from .kalman_filter import KalmanFilter
 from . import matching
 from .basetrack import BaseTrack, TrackState
+from box_tracker import DCF
+from utils import scale_coords, scale_f_coords, is_outside_image, is_touching_img_borders, draw_frame_info_byte
+
 
 class STrack(BaseTrack):
     shared_kalman = KalmanFilter()
-    def __init__(self, tlwh, score):
+    def __init__(self, tlwh, score, det_idx):
 
         # wait activate
         self._tlwh = np.asarray(tlwh, dtype=np.float64)
@@ -22,6 +26,9 @@ class STrack(BaseTrack):
 
         self.score = score
         self.tracklet_len = 0
+
+        self.dcf = None
+        self.det_idx = det_idx
 
     def predict(self):
         mean_state = self.mean.copy()
@@ -42,7 +49,12 @@ class STrack(BaseTrack):
                 stracks[i].mean = mean
                 stracks[i].covariance = cov
 
-    def activate(self, kalman_filter, frame_id):
+    def dcf_predict(self, features, debug=None):
+        if STrack.dcf_config is not None:
+            self.dcf.predict_displacement(features, self.tlbr, update_psr=True, debug=debug)
+
+
+    def activate(self, kalman_filter, frame_id, features=None, debug=None):
         """Start a new tracklet"""
         self.kalman_filter = kalman_filter
         self.track_id = self.next_id()
@@ -56,7 +68,15 @@ class STrack(BaseTrack):
         self.frame_id = frame_id
         self.start_frame = frame_id
 
-    def re_activate(self, new_track, frame_id, new_id=False):
+        if STrack.dcf_config is not None:
+            self.dcf_updated_at_frame = frame_id
+            self.dcf = DCF(dcf_config=STrack.dcf_config,
+                           img_shape=STrack.img_shape,
+                           features=features,
+                           bbox=scale_f_coords(STrack.img_shape, np.expand_dims(self.tlbr, axis=0), features.shape[2:])[0],
+                           debug=debug)
+
+    def re_activate(self, new_track, frame_id, new_id=False, features=None, debug=None):
         self.mean, self.covariance = self.kalman_filter.update(
             self.mean, self.covariance, self.tlwh_to_xyah(new_track.tlwh)
         )
@@ -68,7 +88,15 @@ class STrack(BaseTrack):
             self.track_id = self.next_id()
         self.score = new_track.score
 
-    def update(self, new_track, frame_id):
+        if STrack.dcf_config is not None:
+            self.dcf_updated_at_frame = frame_id
+            self.dcf.update_filter(
+                features=features,
+                bbox=scale_f_coords(STrack.img_shape, np.expand_dims(self.tlbr, axis=0), features.shape[2:])[0],
+                debug=debug
+            )
+
+    def update(self, new_track, frame_id, features=None, debug=None):
         """
         Update a matched track
         :type new_track: STrack
@@ -86,6 +114,14 @@ class STrack(BaseTrack):
         self.is_activated = True
 
         self.score = new_track.score
+
+        if STrack.dcf_config is not None:
+            self.dcf_updated_at_frame = frame_id
+            self.dcf.update_filter(
+                features=features,
+                bbox=scale_f_coords(STrack.img_shape, np.expand_dims(self.tlbr, axis=0), features.shape[2:])[0],
+                debug=debug
+            )
 
     @property
     # @jit(nopython=True)
@@ -109,6 +145,14 @@ class STrack(BaseTrack):
         ret = self.tlwh.copy()
         ret[2:] += ret[:2]
         return ret
+    
+    @property
+    def area(self):
+        return self.tlwh[2] * self.tlwh[3]
+    
+    # @property
+    # def clipped_area(self):
+    #     tlbr = self.tlbr.copy()
 
     @staticmethod
     # @jit(nopython=True)
@@ -154,19 +198,45 @@ class BYTETracker(object):
         self.lost_stracks = []  # type: list[STrack]
         self.removed_stracks = []  # type: list[STrack]
 
-        self.frame_id = 0
+        self.dcf_config = dcf_config
+        self.use_dcf = dcf_config is not None
+        if self.use_dcf:
+            self.lost_psr_th = dcf_config["lost_psr_th"]
+            self.use_dcf_gating = dcf_config["use_dcf_gating"]
+            self.dcf_gating_th = dcf_config["dcf_gating_th"]
+            self.dcf_gating_cost_th = dcf_config["dcf_gating_cost_th"]
+            self.dcf_gating_candidate_cost_th = dcf_config["dcf_gating_candidate_cost_th"]
+            self.use_dcf_reid = dcf_config["use_dcf_reid"]
+            self.dcf_reid_th = dcf_config["dcf_reid_th"]
+        STrack.dcf_config = dcf_config
+        STrack.tracker_config = tracker_config
+        STrack.img_shape = img_shape
+        self.img_shape = img_shape
+
+        self.frame_count = 0
         # self.args = args
         #self.det_thresh = args.track_thresh
         self.det_conf_thresholds = tracker_config["det_conf_thresholds"]
         self.det_thresh = tracker_config["new_det_conf_th"]
         self.match_thresholds = tracker_config["match_thresholds"]
         self.min_box_area = tracker_config["min_box_area"]
+        self.init_iou_suppress = tracker_config["init_iou_suppress"]
         self.buffer_size = int(frame_rate / 30.0 * tracker_config["track_buffer"])
         self.max_time_lost = self.buffer_size
         self.kalman_filter = KalmanFilter()
 
+        self.debug_vis_scale = debug_vis_scale
+        self.debug_history_itstart = []
+        self.debug_history_afterupdate = []
+        self.debug_modes = []
+        # self.debug_modes = ["dcf_predict"]
+
+        self.dcf_histogram_data = []
+        self.areas_to_psr = {}
+
+
     def update(self, output_results, features=None, debug_img=None, debug=None):
-        self.frame_id += 1
+        self.frame_count += 1
         activated_starcks = []
         refind_stracks = []
         lost_stracks = []
@@ -195,10 +265,16 @@ class BYTETracker(object):
 
         if len(dets) > 0:
             '''Detections'''
-            detections = [STrack(STrack.tlbr_to_tlwh(tlbr), s) for
-                          (tlbr, s) in zip(dets, scores_keep)]
+            detections = [STrack(STrack.tlbr_to_tlwh(tlbr), s, det_idx=[idx for idx, x in enumerate(remain_inds) if x][i])
+                          for i, (tlbr, s) in enumerate(zip(dets, scores_keep))]
         else:
             detections = []
+        if len(dets_second) > 0:
+            '''Detections'''
+            detections_second = [STrack(STrack.tlbr_to_tlwh(tlbr), s, det_idx=[idx for idx, x in enumerate(inds_second) if x][i]) 
+                                 for i, (tlbr, s) in enumerate(zip(dets_second, scores_second))]
+        else:
+            detections_second = []
 
         ''' Add newly detected tracklets to tracked_stracks'''
         unconfirmed = []
@@ -209,8 +285,35 @@ class BYTETracker(object):
             else:
                 tracked_stracks.append(track)
 
+        if debug:
+            print('frame:', self.frame_count)
+            vis_img = draw_frame_info_byte(img=debug_img,
+                                            trackers=self.tracked_stracks,
+                                            lost_trackers=self.lost_stracks,
+                                            in_detections=output_results,
+                                            frame_number=self.frame_count,
+                                            dcf=self.use_dcf)
+            self.debug_history_itstart.append(vis_img)  
+
         ''' Step 2: First association, with high score detection boxes'''
         strack_pool = joint_stracks(tracked_stracks, self.lost_stracks)
+
+        # for track in strack_pool:
+        #     if track.state == TrackState.Removed:
+        #         print('dupa')
+        #     if track.area > 100:
+        #         # self.histogram_areas.append(track.area)
+        #         # print(track.tlbr)
+        #         track.dcf_predict(features,
+        #                         debug="predict, trkid{}".format(track.track_id) if 
+        #                             (debug is not None and "dcf_predict" in self.debug_modes)
+        #                             else None
+        #         )
+        #         if track.area in self.areas_to_psr:
+        #             self.areas_to_psr[track.area].append(track.dcf.psr)
+        #         else:
+        #             self.areas_to_psr[track.area] = [track.dcf.psr]
+        #         self.dcf_histogram_data.append(track.dcf.psr)
         # Predict the current location with KF
         STrack.multi_predict(strack_pool)
         dists = matching.iou_distance(strack_pool, detections)
@@ -222,20 +325,27 @@ class BYTETracker(object):
             track = strack_pool[itracked]
             det = detections[idet]
             if track.state == TrackState.Tracked:
-                track.update(detections[idet], self.frame_id)
+                track.update(det,
+                             self.frame_count,
+                             features=features,
+                             debug="update trkid{} with det{}".format(track.track_id, det.det_idx) if
+                                (debug is not None and "dcf_update_det" in self.debug_modes)
+                                else None
+                )
                 activated_starcks.append(track)
-            else:
-                track.re_activate(det, self.frame_id, new_id=False)
+            else:  
+                track.re_activate(det,
+                                  self.frame_count,
+                                  new_id=False,
+                                  features=features,
+                                  debug="re_activate trkid{} with det{}".format(track.track_id, det.det_idx) if
+                                        (debug is not None and "dcf_update_det" in self.debug_modes)
+                                        else None
+                )
                 refind_stracks.append(track)
 
         ''' Step 3: Second association, with low score detection boxes'''
         # association the untrack to the low score detections
-        if len(dets_second) > 0:
-            '''Detections'''
-            detections_second = [STrack(STrack.tlbr_to_tlwh(tlbr), s) for
-                          (tlbr, s) in zip(dets_second, scores_second)]
-        else:
-            detections_second = []
         r_tracked_stracks = [strack_pool[i] for i in u_track if strack_pool[i].state == TrackState.Tracked]
         dists = matching.iou_distance(r_tracked_stracks, detections_second)
         matches, u_track, u_detection_second = matching.linear_assignment(dists, thresh=0.5)
@@ -243,10 +353,23 @@ class BYTETracker(object):
             track = r_tracked_stracks[itracked]
             det = detections_second[idet]
             if track.state == TrackState.Tracked:
-                track.update(det, self.frame_id)
+                track.update(det,
+                             self.frame_count,
+                             features=features,
+                             debug="update trkid{} with det{}".format(track.track_id, det.det_idx) if
+                                (debug is not None and "dcf_update_det" in self.debug_modes)
+                                else None
+                )
                 activated_starcks.append(track)
             else:
-                track.re_activate(det, self.frame_id, new_id=False)
+                track.re_activate(det,
+                                  self.frame_count,
+                                  new_id=False,
+                                  features=features,
+                                  debug="re_activate trkid{} with det{}".format(track.track_id, det.det_idx) if
+                                        (debug is not None and "dcf_update_det" in self.debug_modes)
+                                        else None
+                )
                 refind_stracks.append(track)
 
         for it in u_track:
@@ -262,7 +385,13 @@ class BYTETracker(object):
         dists = matching.fuse_score(dists, detections)
         matches, u_unconfirmed, u_detection = matching.linear_assignment(dists, thresh=0.7)
         for itracked, idet in matches:
-            unconfirmed[itracked].update(detections[idet], self.frame_id)
+            unconfirmed[itracked].update(detections[idet],
+                                        self.frame_count,
+                                        features=features,
+                                        debug="update trkid{} with det{}".format(track.track_id, det.det_idx) if
+                                            (debug is not None and "dcf_update_det" in self.debug_modes)
+                                            else None
+            )
             activated_starcks.append(unconfirmed[itracked])
         for it in u_unconfirmed:
             track = unconfirmed[it]
@@ -270,15 +399,37 @@ class BYTETracker(object):
             removed_stracks.append(track)
 
         """ Step 4: Init new stracks"""
+        active_now = [t for t in (self.tracked_stracks + self.lost_stracks) if t.state == TrackState.Tracked]
         for inew in u_detection:
             track = detections[inew]
             if track.score < self.det_thresh:
                 continue
-            track.activate(self.kalman_filter, self.frame_id)
-            activated_starcks.append(track)
+
+            det_box = track.tlbr
+            max_iou = 0.0
+            for at in active_now:
+                at_box = at.tlbr  # already tlbr
+                max_iou = max(max_iou, _iou(det_box, at_box))
+                if max_iou >= self.init_iou_suppress:
+                    break
+
+            # Only initialize if it does NOT heavily overlap an active track
+            if max_iou < self.init_iou_suppress:
+                track.activate(self.kalman_filter,
+                               self.frame_count,
+                               features=features,
+                               debug="init from det{}".format(track.det_idx) if
+                                    (debug is not None and "dcf_init" in self.debug_modes)
+                                    else None
+                )
+                activated_starcks.append(track)
+
         """ Step 5: Update state"""
         for track in self.lost_stracks:
-            if self.frame_id - track.end_frame > self.max_time_lost:
+            if self.frame_count - track.end_frame > self.max_time_lost:
+                track.mark_removed()
+                removed_stracks.append(track)
+            elif is_outside_image(self.img_shape, track.tlbr):
                 track.mark_removed()
                 removed_stracks.append(track)
 
@@ -289,10 +440,23 @@ class BYTETracker(object):
         self.tracked_stracks = joint_stracks(self.tracked_stracks, refind_stracks)
         self.lost_stracks = sub_stracks(self.lost_stracks, self.tracked_stracks)
         self.lost_stracks.extend(lost_stracks)
-        self.lost_stracks = sub_stracks(self.lost_stracks, self.removed_stracks)
         self.removed_stracks.extend(removed_stracks)
+        self.lost_stracks = sub_stracks(self.lost_stracks, self.removed_stracks)
         self.tracked_stracks, self.lost_stracks = remove_duplicate_stracks(self.tracked_stracks, self.lost_stracks)
         # get scores of lost tracks
+
+        if debug:
+            vis_img = draw_frame_info_byte(img=debug_img,
+                                           trackers=self.tracked_stracks,
+                                           lost_trackers=self.lost_stracks,
+                                            # trackers=[t for t in self.tracked_stracks if t.track_id == 74],
+                                            # lost_trackers=[t for t in self.lost_stracks if t.track_id == 74],
+                                            in_detections=output_results,
+                                            frame_number=self.frame_count,
+                                            scale=self.debug_vis_scale,
+                                            dcf=(self.dcf_config is not None),
+                                            det_conf_th=self.det_conf_thresholds[0])
+            self.debug_history_afterupdate.append(vis_img)
 
         output = []
         for t in self.tracked_stracks:
@@ -343,3 +507,16 @@ def remove_duplicate_stracks(stracksa, stracksb):
     resa = [t for i, t in enumerate(stracksa) if not i in dupa]
     resb = [t for i, t in enumerate(stracksb) if not i in dupb]
     return resa, resb
+
+def _iou(a, b):
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    inter_x1, inter_y1 = max(ax1, bx1), max(ay1, by1)
+    inter_x2, inter_y2 = min(ax2, bx2), min(ay2, by2)
+    iw, ih = max(0.0, inter_x2 - inter_x1), max(0.0, inter_y2 - inter_y1)
+    inter = iw * ih
+    if inter == 0:
+        return 0.0
+    area_a = (ax2 - ax1) * (ay2 - ay1)
+    area_b = (bx2 - bx1) * (by2 - by1)
+    return inter / (area_a + area_b - inter + 1e-9)

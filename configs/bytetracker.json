@@ -12,7 +12,6 @@
         "dampen_motion_occ": 0.89,
         "active_occ_to_lost_thresh": 9,
         "init_iou_suppress": 9999,
-        "min_box_area_to_report": 100,
         "not_matched_for_lost_th": 0,
         "handle_occlusion": false,
         "biou_buffer_sizes": [0, 0]

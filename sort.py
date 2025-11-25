@@ -42,6 +42,7 @@ from utils import draw_bboxes, scale_coords, draw_frame_info
 from box_tracker import KalmanBoxTracker, TrackerState
 
 from fasttracker.fasttracker import Fasttracker
+from fasttracker.byte_tracker import BYTETracker
 from fasttracker.cbiou_tracker import C_BIoUTracker
 
 np.random.seed(0)
@@ -716,20 +717,19 @@ def run_experiment(args, config):
                     dets[:, 2:4] += dets[:, 0:2] #convert to [x1,y1,w,h] to [x1,y1,x2,y2]
                     total_frames += 1
 
-                    if args.debug and args.debug_images != "":
-                        debug_img = cv2.imread(join(args.debug_images, seq, 'img1', '%06d.jpg'%(frame)))
-                    else:
-                        debug_img = None
-
                     start_time = time.time()
-                    trackers = mot_tracker.update(dets, features=frame_features, debug_img=debug_img)
+                    trackers = mot_tracker.update(dets, features=frame_features)
                     cycle_time = time.time() - start_time
                     # print('cycle time:', cycle_time)
                     total_time += cycle_time
 
                     for d in trackers:
                         print('%d,%d,%.2f,%.2f,%.2f,%.2f,1,-1,-1,-1'%(frame - first_frame_id + 1,d[4],d[0],d[1],d[2]-d[0],d[3]-d[1]),file=out_file)
-
+                # plt.hist(mot_tracker.dcf_histogram_data)
+                # plt.show()
+                # plt.figure()
+                # plt.scatter(mot_tracker.areas_to_psr.keys(), [np.mean(val) for val in mot_tracker.areas_to_psr.values()])
+                # plt.show()
         if key == ord('q'):
             break
         

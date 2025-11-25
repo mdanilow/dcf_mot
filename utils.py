@@ -122,11 +122,13 @@ def draw_frame_info_byte(img, trackers, lost_trackers, in_detections, frame_numb
                         "conf": ["{:.2f}".format(d.score) for d in in_detections if d.score >= det_conf_th]}
     trackers_info = {"id": [t.track_id for t in trackers],
                     #  "Ac": [t.is_activated for t in trackers],
-                     "Occ": [t.is_occluded for t in trackers]
+                    #  "Occ": [t.is_occluded for t in trackers]
+                    "a": [int(t.area) for t in trackers]
                      }
     lost_trackers_info = {"id": [t.track_id for t in lost_trackers],
                         # "Ac": [t.is_activated for t in lost_trackers],
-                         "Occ": [t.is_occluded for t in lost_trackers]
+                        #  "Occ": [t.is_occluded for t in lost_trackers]
+                        "a": [int(t.tlwh[2] * t.tlwh[3]) for t in lost_trackers]
                         }
     if dcf:
         dcf_info = {"psr": ["{:.1f}".format(t.dcf.psr) for t in trackers],
@@ -222,13 +224,13 @@ def scale_coords(img0_shape, coords, img1_shape):
 # completely outside image
 def is_outside_image(img_shape, tlbr):
     img_h, img_w, _ = img_shape
-    if tlbr[0] > img_w:
+    if tlbr[0] >= img_w - 1:
         return True
-    if tlbr[1] > img_h:
+    if tlbr[1] >= img_h - 1:
         return True
-    if tlbr[2] < 0:
+    if tlbr[2] <= 0:
         return True
-    if tlbr[3] < 0:
+    if tlbr[3] <= 0:
         return True
     return False
 

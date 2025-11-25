@@ -1,5 +1,5 @@
 {
-    "meta_tracker": "Fasttracker",
+    "meta_tracker": "BYTETracker",
     "tracker_config": {
         "det_conf_thresholds": [0.1, 0.6],
         "new_det_conf_th": 0.7,
@@ -11,9 +11,8 @@
         "enlarge_bbox_occ": 1.1,
         "dampen_motion_occ": 0.89,
         "active_occ_to_lost_thresh": 9,
-        "init_iou_suppress": 0.6,
-        "min_box_area_to_report": 100,
-        "not_matched_for_lost_th": 0,
+        "init_iou_suppress": 0.55,
+        "not_matched_for_lost_th": 10,
         "handle_occlusion": false,
         "biou_buffer_sizes": [0, 0]
     },
@@ -23,11 +22,13 @@
         "roi_size": 64,
         "sigma": 7,
         "search_region_scale": 1,
-        "crop_mode": "roi_pool",
+        "crop_mode": "crop_resize",
+        "resize_interp_mode": "cv2.INTER_LINEAR",
         "lambd": 0.01,
         "lr": 0.025,
         "normalize_features": true,
         "predict_position": false,
-        "psr_peak_crop_size": 11
+        "psr_peak_crop_size": 11,
+        "lost_psr_th": 15
     }
 }

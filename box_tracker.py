@@ -198,9 +198,10 @@ class DCF():
         self.psr_peak_crop_size = dcf_config['psr_peak_crop_size']
         self.resize_interp_mode = eval(dcf_config['resize_interp_mode'])
         self.liveness_fn = eval(dcf_config["liveness_fn"])
+        self.shift_hanning_window_up = dcf_config["shift_hanning_window_up"]
         if DCF.G is None:
             DCF.G = np.fft.fft2(self.get_gauss_response(self.roi_size))
-            DCF.hanning_window = window_func_2d(self.roi_size, self.roi_size)
+            DCF.hanning_window = window_func_2d(self.roi_size, self.roi_size, shift_up=self.shift_hanning_window_up)
 
         self.init_filter(features, bbox, debug=debug)
         self.psr = -1
@@ -386,12 +387,21 @@ class DCF():
         return img
     
 
-def window_func_2d(height, width):
+def window_func_2d(height, width, shift_up=0):
     win_col = np.hanning(width)
     win_row = np.hanning(height)
     mask_col, mask_row = np.meshgrid(win_col, win_row)
 
     win = mask_col * mask_row
+    if shift_up != 0:
+        new_win = np.zeros(win.shape)
+        abs_shift = int(shift_up * height)
+        new_win[:(height - abs_shift), :] = win[abs_shift:, :]
+        win = new_win
+
+    # test = test = ((win - np.min(win)) / (np.max(win) - np.min(win))) * 255
+    # test = np.stack([test] * 3, axis=2)
+    # cv2.imshow("window", test.astype(np.uint8))
 
     return win
 

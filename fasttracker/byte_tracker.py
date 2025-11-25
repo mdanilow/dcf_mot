@@ -22,8 +22,10 @@ class STrack(BaseTrack):
         self._tlwh = np.asarray(tlwh, dtype=np.float64)
         self.kalman_filter = None
         self.mean, self.covariance = None, None
+        self.mean_nowhpred = None
         self.is_activated = False
 
+        self.not_matched = 0
         self.score = score
         self.tracklet_len = 0
 
@@ -46,6 +48,8 @@ class STrack(BaseTrack):
                     multi_mean[i][7] = 0
             multi_mean, multi_covariance = STrack.shared_kalman.multi_predict(multi_mean, multi_covariance)
             for i, (mean, cov) in enumerate(zip(multi_mean, multi_covariance)):
+                # stracks[i].mean_nowhpred = stracks[i].mean.copy()
+                # stracks[i].mean_nowhpred[:2] = mean[:2]
                 stracks[i].mean = mean
                 stracks[i].covariance = cov
 
@@ -80,6 +84,7 @@ class STrack(BaseTrack):
         self.mean, self.covariance = self.kalman_filter.update(
             self.mean, self.covariance, self.tlwh_to_xyah(new_track.tlwh)
         )
+        self.not_matched = 0
         self.tracklet_len = 0
         self.state = TrackState.Tracked
         self.is_activated = True
@@ -105,6 +110,7 @@ class STrack(BaseTrack):
         :return:
         """
         self.frame_id = frame_id
+        self.not_matched = 0
         self.tracklet_len += 1
 
         new_tlwh = new_track.tlwh
@@ -135,6 +141,15 @@ class STrack(BaseTrack):
         ret[2] *= ret[3]
         ret[:2] -= ret[2:] / 2
         return ret
+    
+    @property
+    def tlwh_nowhpred(self):
+        if self.mean_nowhpred is None:
+            return self._tlwh.copy()
+        ret = self.mean_nowhpred[:4].copy()
+        ret[2] *= ret[3]
+        ret[:2] -= ret[2:] / 2
+        return ret
 
     @property
     # @jit(nopython=True)
@@ -143,6 +158,12 @@ class STrack(BaseTrack):
         `(top left, bottom right)`.
         """
         ret = self.tlwh.copy()
+        ret[2:] += ret[:2]
+        return ret
+    
+    @property
+    def tlbr_nowhpred(self):
+        ret = self.tlwh_nowhpred.copy()
         ret[2:] += ret[:2]
         return ret
     
@@ -157,6 +178,13 @@ class STrack(BaseTrack):
         tlwh = STrack.tlbr_to_tlwh(tlbr)
         area = tlwh[2] * tlwh[3]
         return area
+    
+    @property
+    def clipped_tlwh(self):
+        tlbr = self.tlbr.copy()
+        clip_coords(np.expand_dims(tlbr, axis=0), STrack.img_shape)
+        tlwh = STrack.tlbr_to_tlwh(tlbr)
+        return tlwh
 
     @staticmethod
     # @jit(nopython=True)
@@ -212,6 +240,8 @@ class BYTETracker(object):
             self.dcf_gating_candidate_cost_th = dcf_config["dcf_gating_candidate_cost_th"]
             self.use_dcf_reid = dcf_config["use_dcf_reid"]
             self.dcf_reid_th = dcf_config["dcf_reid_th"]
+            self.dcf_min_h = img_shape[0] * 64 / 1080
+            self.dcf_min_w = img_shape[1] * 32 / 1920
         STrack.dcf_config = dcf_config
         STrack.tracker_config = tracker_config
         STrack.img_shape = img_shape
@@ -225,12 +255,14 @@ class BYTETracker(object):
         self.match_thresholds = tracker_config["match_thresholds"]
         self.min_box_area = tracker_config["min_box_area"]
         self.init_iou_suppress = tracker_config["init_iou_suppress"]
+        self.not_matched_for_lost_th = tracker_config["not_matched_for_lost_th"]
         self.buffer_size = int(frame_rate / 30.0 * tracker_config["track_buffer"])
         self.max_time_lost = self.buffer_size
         self.kalman_filter = KalmanFilter()
 
         self.debug_vis_scale = debug_vis_scale
         self.debug_history_itstart = []
+        self.debug_history_locpred = []
         self.debug_history_afterupdate = []
         self.debug_modes = []
         # self.debug_modes = ["dcf_predict"]
@@ -291,34 +323,39 @@ class BYTETracker(object):
 
         if debug:
             print('frame:', self.frame_count)
+
             vis_img = draw_frame_info_byte(img=debug_img,
                                             trackers=self.tracked_stracks,
                                             lost_trackers=self.lost_stracks,
                                             in_detections=output_results,
                                             frame_number=self.frame_count,
                                             dcf=self.use_dcf)
+            from utils import draw_bboxes
+            draw_bboxes(vis_img, np.array([[0, 0, self.dcf_min_w, self.dcf_min_h]]))
             self.debug_history_itstart.append(vis_img)  
 
         ''' Step 2: First association, with high score detection boxes'''
         strack_pool = joint_stracks(tracked_stracks, self.lost_stracks)
-
-        for track in strack_pool:
-            if track.state == TrackState.Removed:
-                print('dupa')
-            area = track.clipped_area
-            if area > 500:
-                # self.histogram_areas.append(track.area)
-                # print(track.tlbr)
-                track.dcf_predict(features,
-                                debug="predict, trkid{}".format(track.track_id) if 
-                                    (debug is not None and "dcf_predict" in self.debug_modes)
-                                    else None
-                )
-                if area in self.areas_to_psr:
-                    self.areas_to_psr[area].append(track.dcf.psr)
-                else:
-                    self.areas_to_psr[area] = [track.dcf.psr]
-                self.dcf_histogram_data.append(track.dcf.psr)
+        # # EXPERIMENTS
+        # if self.use_dcf:
+        #     for track in strack_pool:
+        #         if track.state == TrackState.Removed:
+        #             print('dupa')
+        #         area = track.clipped_area
+        #         tlwh = track.clipped_tlwh
+        #         if tlwh[2] > self.dcf_min_w and tlwh[3] > self.dcf_min_h:
+        #             # self.histogram_areas.append(track.area)
+        #             # print(track.tlbr)
+        #             track.dcf_predict(features,
+        #                             debug="predict, trkid{}".format(track.track_id) if 
+        #                                 (debug is not None and "dcf_predict" in self.debug_modes)
+        #                                 else None
+        #             )
+        #             if area in self.areas_to_psr:
+        #                 self.areas_to_psr[area].append(track.dcf.psr)
+        #             else:
+        #                 self.areas_to_psr[area] = [track.dcf.psr]
+        #             self.dcf_histogram_data.append(track.dcf.psr)
         # Predict the current location with KF
         STrack.multi_predict(strack_pool)
         dists = matching.iou_distance(strack_pool, detections)
@@ -377,11 +414,29 @@ class BYTETracker(object):
                 )
                 refind_stracks.append(track)
 
+        '''Decide state of unassigned trackers'''
         for it in u_track:
             track = r_tracked_stracks[it]
-            if not track.state == TrackState.Lost:
+            track.not_matched += 1
+            if not (track.state == TrackState.Lost) and (track.not_matched > self.not_matched_for_lost_th):
                 track.mark_lost()
                 lost_stracks.append(track)
+            elif self.use_dcf:
+                track.dcf_predict(features, debug="predict, trkid{}".format(track.track_id) if 
+                    (debug is not None and "dcf_predict" in self.debug_modes)
+                    else None
+                )
+                if track.dcf.psr < self.lost_psr_th:
+                    track.mark_lost()
+                    lost_stracks.append(track)
+                else:
+                    track.dcf.update_filter(
+                        features=features,
+                        bbox=scale_f_coords(STrack.img_shape, np.expand_dims(track.tlbr, axis=0), features.shape[2:])[0],
+                        debug="update trkid{} with prediction".format(track.track_id) if
+                            (debug is not None and "dcf_update_pred" in self.debug_modes)
+                            else None
+                    )
 
         '''Deal with unconfirmed tracks, usually tracks with only one beginning frame'''
         detections = [detections[i] for i in u_detection]

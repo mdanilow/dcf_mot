@@ -6,6 +6,7 @@ import copy
 import torch
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
+import cv2
 
 from .kalman_filter import KalmanFilter
 from . import matching
@@ -23,9 +24,11 @@ class STrack(BaseTrack):
         self.kalman_filter = None
         self.mean, self.covariance = None, None
         self.mean_nowhpred = None
+        self.mean_history = []
         self.is_activated = False
 
         self.not_matched = 0
+        self.is_occluded = False
         self.score = score
         self.tracklet_len = 0
 
@@ -58,11 +61,18 @@ class STrack(BaseTrack):
             self.dcf.predict_displacement(features, self.tlbr, update_psr=True, debug=debug)
 
 
+    def update_history(self, new_mean):
+        self.mean_history.append(new_mean.copy())
+        if len(self.mean_history) > 100:
+            self.mean_history.pop(0)
+
+
     def activate(self, kalman_filter, frame_id, features=None, debug=None):
         """Start a new tracklet"""
         self.kalman_filter = kalman_filter
         self.track_id = self.next_id()
         self.mean, self.covariance = self.kalman_filter.initiate(self.tlwh_to_xyah(self._tlwh))
+        self.update_history(self.mean)
 
         self.tracklet_len = 0
         self.state = TrackState.Tracked
@@ -84,7 +94,10 @@ class STrack(BaseTrack):
         self.mean, self.covariance = self.kalman_filter.update(
             self.mean, self.covariance, self.tlwh_to_xyah(new_track.tlwh)
         )
+        self.update_history(self.mean)
         self.not_matched = 0
+        self.is_occluded = False
+        self.occluded_len = 0
         self.tracklet_len = 0
         self.state = TrackState.Tracked
         self.is_activated = True
@@ -111,11 +124,14 @@ class STrack(BaseTrack):
         """
         self.frame_id = frame_id
         self.not_matched = 0
+        self.is_occluded = False
+        self.occluded_len = 0
         self.tracklet_len += 1
 
         new_tlwh = new_track.tlwh
         self.mean, self.covariance = self.kalman_filter.update(
             self.mean, self.covariance, self.tlwh_to_xyah(new_tlwh))
+        self.update_history(self.mean)
         self.state = TrackState.Tracked
         self.is_activated = True
 
@@ -256,6 +272,10 @@ class BYTETracker(object):
         self.min_box_area = tracker_config["min_box_area"]
         self.init_iou_suppress = tracker_config["init_iou_suppress"]
         self.not_matched_for_lost_th = tracker_config["not_matched_for_lost_th"]
+        self.handle_occlusion = tracker_config["handle_occlusion"]
+        self.max_time_recently_occluded = 10
+        self.occ_velocity_rewind = 10
+        self.occ_position_rewind = 5
         self.buffer_size = int(frame_rate / 30.0 * tracker_config["track_buffer"])
         self.max_time_lost = self.buffer_size
         self.kalman_filter = KalmanFilter()
@@ -414,7 +434,7 @@ class BYTETracker(object):
                 )
                 refind_stracks.append(track)
 
-        '''Decide state of unassigned trackers'''
+        '''Decide state of unassigned (but tracked, not lost) trackers'''
         for it in u_track:
             track = r_tracked_stracks[it]
             track.not_matched += 1
@@ -430,6 +450,7 @@ class BYTETracker(object):
                     track.mark_lost()
                     lost_stracks.append(track)
                 else:
+                    track.update_history(track.mean)
                     track.dcf.update_filter(
                         features=features,
                         bbox=scale_f_coords(STrack.img_shape, np.expand_dims(track.tlbr, axis=0), features.shape[2:])[0],
@@ -437,6 +458,12 @@ class BYTETracker(object):
                             (debug is not None and "dcf_update_pred" in self.debug_modes)
                             else None
                     )
+        if self.handle_occlusion:
+            trackers_for_occlusion = [t for t in self.lost_stracks if t.state == TrackState.Lost]
+            occluders = activated_starcks + refind_stracks
+            if len(trackers_for_occlusion) > 0:
+                print('trackers_for_occlusion', [t.track_id for t in trackers_for_occlusion])
+            self.occlusion_handling(trackers_for_occlusion, occluders)
 
         '''Deal with unconfirmed tracks, usually tracks with only one beginning frame'''
         detections = [detections[i] for i in u_detection]
@@ -484,9 +511,19 @@ class BYTETracker(object):
                 )
                 activated_starcks.append(track)
 
+        #  """ Step 5: Update state"""
+        # for track in self.lost_stracks:
+        #     if is_outside_image(self.img_shape, track.tlbr):
+        #         track.mark_removed()
+        #         removed_stracks.append(track)
+        #         continue
+        #     if self.frame_count - track.end_frame > self.max_time_lost + track.occluded_len:
+        #         track.mark_removed()
+        #         removed_stracks.append(track)
+
         """ Step 5: Update state"""
         for track in self.lost_stracks:
-            if self.frame_count - track.end_frame > self.max_time_lost:
+            if self.frame_count - track.end_frame > self.max_time_lost + track.occluded_len:
                 track.mark_removed()
                 removed_stracks.append(track)
             elif is_outside_image(self.img_shape, track.tlbr):
@@ -528,6 +565,129 @@ class BYTETracker(object):
         return output
 
 
+    def occlusion_handling(self, tracks, occluders):
+        for track in tracks:
+            if track.is_occluded:
+                # still_occluded = False
+                # for occluder in occluders:
+                #     if is_occluded_by(track.tlbr, occluder.tlbr):
+                #         still_occluded = True
+                #         track.occluded_len += 1
+                #         break
+                # track.is_occluded = still_occluded
+                # if not still_occluded:
+                #     # if a tracker stopped being occluded, and is still lost, give self.max_time_recently_occluded frames to be found
+                #     track.occluded_len = self.max_time_lost - self.max_time_recently_occluded
+                if is_occluded_by_many(track, occluders):
+                    track.is_occluded = True
+                    track.occluded_len += 1
+                else:
+                    track.is_occluded = False
+                # else:
+                #     # if a tracker stopped being occluded, and is still lost, give self.max_time_recently_occluded frames to be found
+                #     track.occluded_len = track.occluded_len + self.max_time_recently_occluded - self.max_time_lost
+            else:
+                # for occluder in occluders:
+                #     if is_occluded_by(track.tlbr, occluder.tlbr):
+                #         track.is_occluded = True
+                #         track.occluded_len = 1
+                #         # reset velocity
+                #         track.mean[4:8] = track.mean_history[-self.occ_velocity_rewind][4:8]
+                #         # rewind position
+                #         track.mean[:4] = track.mean_history[-self.occ_position_rewind][:4]
+                #         break
+                if is_occluded_by_many(track, occluders):
+                    track.is_occluded = True
+                    track.occluded_len = 1
+                    # reset velocity
+                    track.mean[4:8] = track.mean_history[-self.occ_velocity_rewind][4:8]
+                    # rewind position
+                    track.mean[:4] = track.mean_history[-self.occ_position_rewind][:4]
+                    break
+
+
+def is_occluded_by(box_a, box_b, iou_thresh=0.7):
+    """Returns True if box_a is significantly overlapped by box_b"""
+    inter = (
+        max(0, min(box_a[2], box_b[2]) - max(box_a[0], box_b[0])) *
+        max(0, min(box_a[3], box_b[3]) - max(box_a[1], box_b[1]))
+    )
+    area_a = (box_a[2] - box_a[0]) * (box_a[3] - box_a[1])
+    if area_a == 0:
+        return False
+    iou = inter / area_a
+    return iou > iou_thresh
+
+
+def is_occluded_by_many(track, occluders, overlap_thresh=0.7, min_iou=0.1):
+    box_area = track.area
+    box_tlwh = track.tlwh
+    box_tlbr = track.tlbr
+    occlusion_mask = np.zeros((int(box_tlwh[3]), int(box_tlwh[2])), dtype=np.uint8)
+    current_overlap = 0
+    # print('trkid', track.track_id, 'tlwh:', box_tlwh)
+    for occluder in occluders:
+        # print('occid', occluder.track_id)
+        occ_tlbr = occluder.tlbr
+        occ_tlwh = occluder.tlwh
+        x_inter = max(0, min(box_tlbr[2], occ_tlbr[2]) - max(box_tlbr[0], occ_tlbr[0]))
+        if x_inter == 0:
+            continue
+        y_inter = max(0, min(box_tlbr[3], occ_tlbr[3]) - max(box_tlbr[1], occ_tlbr[1]))
+        if x_inter == 0:
+            continue
+        # print('inters:', x_inter, y_inter)
+        intersection = x_inter * y_inter
+        union = box_tlwh[2] * box_tlwh[3] + occ_tlwh[2] * occ_tlwh[3] - intersection
+        if intersection / union < min_iou:
+            # print('low iou!')
+            continue
+        
+        x_inter = int(x_inter)
+        y_inter = int(y_inter)
+        if box_tlbr[0] > occ_tlbr[0] and box_tlbr[2] < occ_tlbr[2]: # fully ocluded in x axis
+            if box_tlbr[1] > occ_tlbr[1] and box_tlbr[3] < occ_tlbr[3]: # also fully ocluded in y axis
+                occlusion_mask[:, :] = 1
+            elif box_tlbr[1] > occ_tlbr[1]: # from top
+                occlusion_mask[:y_inter, :] = 1
+            else: # from bottom
+                occlusion_mask[-y_inter:, :] = 1
+        elif box_tlbr[0] > occ_tlbr[0]: # track occluded from the left
+            if box_tlbr[1] > occ_tlbr[1] and box_tlbr[3] < occ_tlbr[3]: # also fully ocluded in y axis
+                occlusion_mask[:, :x_inter] = 1
+            elif box_tlbr[1] > occ_tlbr[1]: # from top
+                occlusion_mask[:y_inter, :x_inter] = 1
+            else: # from bottom
+                occlusion_mask[-y_inter:, :x_inter] = 1
+        else: # track occluded from the right
+            if box_tlbr[1] > occ_tlbr[1] and box_tlbr[3] < occ_tlbr[3]: # also fully ocluded in y axis
+                occlusion_mask[:, -x_inter:] = 1
+            elif box_tlbr[1] > occ_tlbr[1]: # from top
+                occlusion_mask[:y_inter, -x_inter:] = 1
+            else: # from bottom
+                occlusion_mask[-y_inter:, -x_inter:] = 1
+        
+        current_overlap = occlusion_mask.sum() / box_area > overlap_thresh
+        if current_overlap > overlap_thresh:
+            break
+    # print(occlusion_mask)
+    # cv2.imshow('occlusion trkid{}'.format(track.track_id), occlusion_mask*255)
+    return current_overlap
+
+def _iou(a, b):
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    inter_x1, inter_y1 = max(ax1, bx1), max(ay1, by1)
+    inter_x2, inter_y2 = min(ax2, bx2), min(ay2, by2)
+    iw, ih = max(0.0, inter_x2 - inter_x1), max(0.0, inter_y2 - inter_y1)
+    inter = iw * ih
+    if inter == 0:
+        return 0.0
+    area_a = (ax2 - ax1) * (ay2 - ay1)
+    area_b = (bx2 - bx1) * (by2 - by1)
+    return inter / (area_a + area_b - inter + 1e-9)
+
+
 def joint_stracks(tlista, tlistb):
     exists = {}
     res = []
@@ -567,16 +727,3 @@ def remove_duplicate_stracks(stracksa, stracksb):
     resa = [t for i, t in enumerate(stracksa) if not i in dupa]
     resb = [t for i, t in enumerate(stracksb) if not i in dupb]
     return resa, resb
-
-def _iou(a, b):
-    ax1, ay1, ax2, ay2 = a
-    bx1, by1, bx2, by2 = b
-    inter_x1, inter_y1 = max(ax1, bx1), max(ay1, by1)
-    inter_x2, inter_y2 = min(ax2, bx2), min(ay2, by2)
-    iw, ih = max(0.0, inter_x2 - inter_x1), max(0.0, inter_y2 - inter_y1)
-    inter = iw * ih
-    if inter == 0:
-        return 0.0
-    area_a = (ax2 - ax1) * (ay2 - ay1)
-    area_b = (bx2 - bx1) * (by2 - by1)
-    return inter / (area_a + area_b - inter + 1e-9)

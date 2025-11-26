@@ -1,5 +1,5 @@
 {
-    "meta_tracker": "Fasttracker",
+    "meta_tracker": "BYTETracker",
     "tracker_config": {
         "det_conf_thresholds": [0.1, 0.6],
         "new_det_conf_th": 0.7,
@@ -11,9 +11,8 @@
         "enlarge_bbox_occ": 1.1,
         "dampen_motion_occ": 0.89,
         "active_occ_to_lost_thresh": 9,
-        "init_iou_suppress": 0.6,
-        "min_box_area_to_report": 100,
-        "not_matched_for_lost_th": 0,
+        "init_iou_suppress": 0.55,
+        "not_matched_for_lost_th": 4,
         "handle_occlusion": false,
         "biou_buffer_sizes": [0, 0]
     },
@@ -31,9 +30,13 @@
         "predict_position": false,
         "psr_peak_crop_size": 11,
         "liveness_fn": "compute_apce",
-        "lost_psr_th": 15,
+        "lost_psr_th": 26,
         "use_dcf_gating": false,
-        "dcf_gating_th": 10,
-        "dcf_gating_candidate_cost_th": 0.9
+        "dcf_gating_th": 9,
+        "dcf_gating_cost_th": 0.4,
+        "dcf_gating_candidate_cost_th": 0.9,
+        "use_dcf_reid": false,
+        "dcf_reid_th": false,
+        "shift_hanning_window_up": 0.17
     }
 }

@@ -44,6 +44,8 @@
         "use_dcf_gating": true,
         "dcf_gating_th": 9,
         "dcf_gating_cost_th": 0.4,
-        "dcf_gating_candidate_cost_th": 0.9
+        "dcf_gating_candidate_cost_th": 0.9,
+        "use_dcf_reid": false,
+        "dcf_reid_th": false
     }
 }

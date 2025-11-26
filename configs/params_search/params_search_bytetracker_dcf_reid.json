@@ -1,0 +1,5 @@
+{
+    "dcf_config": {
+        "dcf_reid_th": "list(range(40, 90, 2))"
+    }
+}

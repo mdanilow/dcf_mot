@@ -263,6 +263,7 @@ class BYTETracker(object):
         STrack.img_shape = img_shape
         self.img_shape = img_shape
 
+        # general tracking options
         self.frame_count = 0
         # self.args = args
         #self.det_thresh = args.track_thresh
@@ -272,10 +273,14 @@ class BYTETracker(object):
         self.min_box_area = tracker_config["min_box_area"]
         self.init_iou_suppress = tracker_config["init_iou_suppress"]
         self.not_matched_for_lost_th = tracker_config["not_matched_for_lost_th"]
+        # occlusion options
         self.handle_occlusion = tracker_config["handle_occlusion"]
-        self.max_time_recently_occluded = 10
-        self.occ_velocity_rewind = 10
-        self.occ_position_rewind = 5
+        if self.handle_occlusion:
+            self.occ_velocity_rewind = tracker_config["occ_velocity_rewind"]
+            self.occ_position_rewind = tracker_config["occ_position_rewind"]
+            self.occ_overlap_thresh = tracker_config["occ_overlap_thresh"]
+            self.occ_time_left_after_occlusion = tracker_config["occ_time_left_after_occlusion"]
+
         self.buffer_size = int(frame_rate / 30.0 * tracker_config["track_buffer"])
         self.max_time_lost = self.buffer_size
         self.kalman_filter = KalmanFilter()
@@ -461,8 +466,8 @@ class BYTETracker(object):
         if self.handle_occlusion:
             trackers_for_occlusion = [t for t in self.lost_stracks if t.state == TrackState.Lost]
             occluders = activated_starcks + refind_stracks
-            if len(trackers_for_occlusion) > 0:
-                print('trackers_for_occlusion', [t.track_id for t in trackers_for_occlusion])
+            # if len(trackers_for_occlusion) > 0:
+                # print('trackers_for_occlusion', [t.track_id for t in trackers_for_occlusion])
             self.occlusion_handling(trackers_for_occlusion, occluders)
 
         '''Deal with unconfirmed tracks, usually tracks with only one beginning frame'''
@@ -511,22 +516,13 @@ class BYTETracker(object):
                 )
                 activated_starcks.append(track)
 
-        #  """ Step 5: Update state"""
-        # for track in self.lost_stracks:
-        #     if is_outside_image(self.img_shape, track.tlbr):
-        #         track.mark_removed()
-        #         removed_stracks.append(track)
-        #         continue
-        #     if self.frame_count - track.end_frame > self.max_time_lost + track.occluded_len:
-        #         track.mark_removed()
-        #         removed_stracks.append(track)
-
         """ Step 5: Update state"""
         for track in self.lost_stracks:
-            if self.frame_count - track.end_frame > self.max_time_lost + track.occluded_len:
+            if is_outside_image(self.img_shape, track.tlbr):
                 track.mark_removed()
                 removed_stracks.append(track)
-            elif is_outside_image(self.img_shape, track.tlbr):
+                continue
+            if self.frame_count - track.end_frame > self.max_time_lost + track.occluded_len:
                 track.mark_removed()
                 removed_stracks.append(track)
 
@@ -568,42 +564,44 @@ class BYTETracker(object):
     def occlusion_handling(self, tracks, occluders):
         for track in tracks:
             if track.is_occluded:
-                # still_occluded = False
-                # for occluder in occluders:
-                #     if is_occluded_by(track.tlbr, occluder.tlbr):
-                #         still_occluded = True
-                #         track.occluded_len += 1
-                #         break
-                # track.is_occluded = still_occluded
-                # if not still_occluded:
-                #     # if a tracker stopped being occluded, and is still lost, give self.max_time_recently_occluded frames to be found
-                #     track.occluded_len = self.max_time_lost - self.max_time_recently_occluded
-                if is_occluded_by_many(track, occluders):
-                    track.is_occluded = True
-                    track.occluded_len += 1
-                else:
-                    track.is_occluded = False
+                still_occluded = False
+                for occluder in occluders:
+                    if is_occluded_by(track.tlbr, occluder.tlbr, self.occ_overlap_thresh):
+                        still_occluded = True
+                        track.occluded_len += 1
+                        break
+                track.is_occluded = still_occluded
+                if not still_occluded:
+                    track.occluded_len = self.occ_time_left_after_occlusion + self.frame_count - track.end_frame - self.max_time_lost
+                    # print('trkid{} time left:'.format(track.track_id), self.frame_count - track.end_frame - self.max_time_lost - track.occluded_len)
+
+                # if is_occluded_by_many(track, occluders, self.occ_overlap_thresh):
+                #     track.is_occluded = True
+                #     track.occluded_len += 1
                 # else:
-                #     # if a tracker stopped being occluded, and is still lost, give self.max_time_recently_occluded frames to be found
-                #     track.occluded_len = track.occluded_len + self.max_time_recently_occluded - self.max_time_lost
+                #     track.is_occluded = False
+
             else:
-                # for occluder in occluders:
-                #     if is_occluded_by(track.tlbr, occluder.tlbr):
-                #         track.is_occluded = True
-                #         track.occluded_len = 1
-                #         # reset velocity
-                #         track.mean[4:8] = track.mean_history[-self.occ_velocity_rewind][4:8]
-                #         # rewind position
-                #         track.mean[:4] = track.mean_history[-self.occ_position_rewind][:4]
-                #         break
-                if is_occluded_by_many(track, occluders):
-                    track.is_occluded = True
-                    track.occluded_len = 1
-                    # reset velocity
-                    track.mean[4:8] = track.mean_history[-self.occ_velocity_rewind][4:8]
-                    # rewind position
-                    track.mean[:4] = track.mean_history[-self.occ_position_rewind][:4]
-                    break
+                for occluder in occluders:
+                    if is_occluded_by(track.tlbr, occluder.tlbr, self.occ_overlap_thresh):
+                        # reset and reduce velocity
+                        track.mean[4:8] = track.mean_history[-min(self.occ_velocity_rewind, len(track.mean_history))][4:8]
+                        # rewind position
+                        track.mean[:4] = track.mean_history[-min(self.occ_position_rewind, len(track.mean_history))][:4]
+                        # Enlarge once
+                        # if track.occluded_len == 0:
+                        #     track.mean[3] *= self.occ_enlarge_bbox  # increase height
+                        track.is_occluded = True
+                        track.occluded_len = 1
+                        break
+                # if is_occluded_by_many(track, occluders, self.occ_overlap_thresh, self.occ_many_min_iou):
+                #     track.is_occluded = True
+                #     track.occluded_len = 1
+                #     # print('occluded, history len:', len(track.mean_history))
+                #     # reset and reduce velocity
+                #     track.mean[4:8] = track.mean_history[-min(self.occ_velocity_rewind, len(track.mean_history))][4:8]
+                #     # rewind position
+                #     track.mean[:4] = track.mean_history[-min(self.occ_position_rewind, len(track.mean_history))][:4]
 
 
 def is_occluded_by(box_a, box_b, iou_thresh=0.7):
@@ -624,6 +622,7 @@ def is_occluded_by_many(track, occluders, overlap_thresh=0.7, min_iou=0.1):
     box_tlwh = track.tlwh
     box_tlbr = track.tlbr
     occlusion_mask = np.zeros((int(box_tlwh[3]), int(box_tlwh[2])), dtype=np.uint8)
+    occlusion_mask_area = np.prod(occlusion_mask.shape)
     current_overlap = 0
     # print('trkid', track.track_id, 'tlwh:', box_tlwh)
     for occluder in occluders:
@@ -667,7 +666,7 @@ def is_occluded_by_many(track, occluders, overlap_thresh=0.7, min_iou=0.1):
             else: # from bottom
                 occlusion_mask[-y_inter:, -x_inter:] = 1
         
-        current_overlap = occlusion_mask.sum() / box_area > overlap_thresh
+        current_overlap = occlusion_mask.sum() / occlusion_mask_area
         if current_overlap > overlap_thresh:
             break
     # print(occlusion_mask)

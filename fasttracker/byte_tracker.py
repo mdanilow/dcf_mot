@@ -257,7 +257,7 @@ class BYTETracker(object):
             self.use_dcf_reid = dcf_config["use_dcf_reid"]
             self.dcf_reid_th = dcf_config["dcf_reid_th"]
             self.dcf_min_h = img_shape[0] * 64 / 1080
-            self.dcf_min_w = img_shape[1] * 32 / 1920
+            self.dcf_min_w = img_shape[1] * 24 / 1920
         STrack.dcf_config = dcf_config
         STrack.tracker_config = tracker_config
         STrack.img_shape = img_shape
@@ -290,7 +290,7 @@ class BYTETracker(object):
         self.debug_history_locpred = []
         self.debug_history_afterupdate = []
         self.debug_modes = []
-        # self.debug_modes = ["dcf_predict"]
+        # self.debug_modes = ["dcf_predict", "dcf_update_det"]
 
         self.dcf_histogram_data = []
         self.areas_to_psr = {}
@@ -443,10 +443,11 @@ class BYTETracker(object):
         for it in u_track:
             track = r_tracked_stracks[it]
             track.not_matched += 1
+            clipped_tlwh = track.clipped_tlwh
             if not (track.state == TrackState.Lost) and (track.not_matched > self.not_matched_for_lost_th):
                 track.mark_lost()
                 lost_stracks.append(track)
-            elif self.use_dcf:
+            elif self.use_dcf and clipped_tlwh[2] > self.dcf_min_w and clipped_tlwh[3] > self.dcf_min_h:
                 track.dcf_predict(features, debug="predict, trkid{}".format(track.track_id) if 
                     (debug is not None and "dcf_predict" in self.debug_modes)
                     else None

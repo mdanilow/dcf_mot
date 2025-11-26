@@ -10,7 +10,7 @@
         "not_matched_for_lost_th": 0,
         "handle_occlusion": true,
         "occ_velocity_rewind": 10,
-        "occ_position_rewind": 5,
+        "occ_position_rewind": 3,
         "occ_overlap_thresh": 0.7,
         "occ_time_left_after_occlusion": 10,
         "biou_buffer_sizes": [0, 0]

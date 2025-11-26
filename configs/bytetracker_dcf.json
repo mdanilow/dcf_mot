@@ -6,13 +6,8 @@
         "track_buffer": 30,
         "match_thresholds": [0.9, 0.5],
         "min_box_area": 100,
-        "reset_velocity_offset_occ": 5,
-        "reset_pos_offset_occ": 3,
-        "enlarge_bbox_occ": 1.1,
-        "dampen_motion_occ": 0.89,
-        "active_occ_to_lost_thresh": 9,
         "init_iou_suppress": 9999,
-        "not_matched_for_lost_th": 10,
+        "not_matched_for_lost_th": 0,
         "handle_occlusion": false,
         "biou_buffer_sizes": [0, 0]
     },
@@ -30,12 +25,13 @@
         "predict_position": false,
         "psr_peak_crop_size": 11,
         "liveness_fn": "compute_apce",
-        "lost_psr_th": 30,
-        "use_dcf_gating": true,
+        "lost_psr_th": 26,
+        "use_dcf_gating": false,
         "dcf_gating_th": 9,
         "dcf_gating_cost_th": 0.4,
         "dcf_gating_candidate_cost_th": 0.9,
         "use_dcf_reid": false,
-        "dcf_reid_th": false
+        "dcf_reid_th": false,
+        "shift_hanning_window_up": 0.17
     }
 }

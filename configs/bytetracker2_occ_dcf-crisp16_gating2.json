@@ -1,0 +1,41 @@
+{
+    "meta_tracker": "BYTETracker",
+    "tracker_config": {
+        "det_conf_thresholds": [0.1, 0.6],
+        "new_det_conf_th": 0.7,
+        "track_buffer": 30,
+        "match_thresholds": [0.9, 0.5],
+        "min_box_area": 100,
+        "init_iou_suppress": 0.55,
+        "not_matched_for_lost_th": 3,
+        "handle_occlusion": true,
+        "occ_velocity_rewind": 10,
+        "occ_position_rewind": 5,
+        "occ_overlap_thresh": 0.7,
+        "occ_time_left_after_occlusion": 10,
+        "biou_buffer_sizes": [0, 0]
+    },
+    "dcf_config": {
+        "use_conv_features": 0,
+        "update_strategy": "init",
+        "roi_size": 64,
+        "sigma": 7,
+        "search_region_scale": 1,
+        "crop_mode": "crop_resize",
+        "resize_interp_mode": "cv2.INTER_LINEAR",
+        "lambd": 0.01,
+        "lr": 0.025,
+        "normalize_features": true,
+        "predict_position": false,
+        "psr_peak_crop_size": 11,
+        "liveness_fn": "compute_apce",
+        "lost_psr_th": 47,
+        "use_dcf_gating": true,
+        "dcf_gating_th": 9,
+        "dcf_gating_cost_th": 0.4,
+        "dcf_gating_candidate_cost_th": 0.9,
+        "use_dcf_reid": false,
+        "dcf_reid_th": false,
+        "shift_hanning_window_up": 0.17
+    }
+}

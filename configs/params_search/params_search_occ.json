@@ -1,0 +1,6 @@
+{
+    "tracker_config": {
+        "occ_time_left_after_occlusion": "[8, 9, 10, 11, 12]",
+        "occ_velocity_rewind": "[8, 9, 10, 11, 12]"
+    }
+} 

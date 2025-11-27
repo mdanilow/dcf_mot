@@ -273,6 +273,7 @@ class BYTETracker(object):
         self.min_box_area = tracker_config["min_box_area"]
         self.init_iou_suppress = tracker_config["init_iou_suppress"]
         self.not_matched_for_lost_th = tracker_config["not_matched_for_lost_th"]
+        self.biou_buffer_sizes = tracker_config["biou_buffer_sizes"]
         # occlusion options
         self.handle_occlusion = tracker_config["handle_occlusion"]
         if self.handle_occlusion:
@@ -291,6 +292,7 @@ class BYTETracker(object):
         self.debug_history_afterupdate = []
         self.debug_modes = []
         # self.debug_modes = ["dcf_predict", "dcf_update_det"]
+        self.debug_modes = ["dcf_gating"]
 
         self.dcf_histogram_data = []
         self.areas_to_psr = {}
@@ -383,7 +385,7 @@ class BYTETracker(object):
         #             self.dcf_histogram_data.append(track.dcf.psr)
         # Predict the current location with KF
         STrack.multi_predict(strack_pool)
-        dists = matching.iou_distance(strack_pool, detections)
+        dists = matching.iou_distance(strack_pool, detections, biou=self.biou_buffer_sizes[0])
         # if not self.args.mot20:
         dists = matching.fuse_score(dists, detections)
         matches, u_track, u_detection = matching.linear_assignment(dists, thresh=self.match_thresholds[0])
@@ -414,7 +416,14 @@ class BYTETracker(object):
         ''' Step 3: Second association, with low score detection boxes'''
         # association the untrack to the low score detections
         r_tracked_stracks = [strack_pool[i] for i in u_track if strack_pool[i].state == TrackState.Tracked]
-        dists = matching.iou_distance(r_tracked_stracks, detections_second)
+        if self.use_dcf and self.use_dcf_gating:
+            dists = self.dcf_gated_iou_distance(r_tracked_stracks,
+                                                detections_second,
+                                                features=features,
+                                                biou=self.biou_buffer_sizes[1],
+                                                debug=debug if "dcf_gating" in self.debug_modes else None)
+        else:
+            dists = matching.iou_distance(r_tracked_stracks, detections_second, biou=self.biou_buffer_sizes[1])
         matches, u_track, u_detection_second = matching.linear_assignment(dists, thresh=0.5)
         for itracked, idet in matches:
             track = r_tracked_stracks[itracked]
@@ -604,6 +613,34 @@ class BYTETracker(object):
                 #     # rewind position
                 #     track.mean[:4] = track.mean_history[-min(self.occ_position_rewind, len(track.mean_history))][:4]
 
+    def dcf_gated_iou_distance(self, tracks, dets, features=None, biou=0, debug=None):
+        cost_matrix = matching.iou_distance(tracks, dets, biou=biou)
+        # get candidate pairs for dcf distance testing
+        # biou_matrix = matching.iou_distance(tracks, dets, biou=0.3)
+        candidates = np.array(np.where(cost_matrix < self.dcf_gating_candidate_cost_th)).transpose()
+        # matching.print_cost_matrix(tracks, dets, biou_matrix, masking_mode="less than 1")
+        response_matrix = np.zeros(cost_matrix.shape)
+        # note: track_i != track_id and det_i != det_idx, it is local indexing only
+        for track_i, det_i in candidates:
+            clipped_tlwh = tracks[track_i].clipped_tlwh
+            if clipped_tlwh[2] > self.dcf_min_w and clipped_tlwh[3] > self.dcf_min_h:
+                _, psr = tracks[track_i].dcf.predict_displacement(features,
+                                                        dets[det_i].tlbr,
+                                                        update_psr=False,
+                                                        debug="dcf response trkid{} with det{}".format(tracks[track_i].track_id, dets[det_i].det_idx)
+                                                            if debug is not None else None)
+                response_matrix[track_i, det_i] = psr
+        gating_matrix = np.logical_or(cost_matrix < self.dcf_gating_cost_th, response_matrix >= self.dcf_gating_th)
+        if debug is not None:
+            matching.print_cost_matrix(tracks, dets, cost_matrix, masking_mode="1 or more")
+            matching.print_cost_matrix(tracks, dets, response_matrix, masking_mode="zeros")
+            matching.print_cost_matrix(tracks, dets, gating_matrix)
+        cost_matrix = np.where(gating_matrix, cost_matrix, 9999)
+        # cost_matrix = np.where(response_matrix >= 50, cost_matrix/response_matrix, cost_matrix)
+        # matching.print_cost_matrix(tracks, dets, cost_matrix, masking_mode="1 or more")
+
+        return cost_matrix
+    
 
 def is_occluded_by(box_a, box_b, iou_thresh=0.7):
     """Returns True if box_a is significantly overlapped by box_b"""

@@ -199,6 +199,7 @@ class DCF():
         self.resize_interp_mode = eval(dcf_config['resize_interp_mode'])
         self.liveness_fn = eval(dcf_config["liveness_fn"])
         self.shift_hanning_window_up = dcf_config["shift_hanning_window_up"]
+        self.channel_weights = np.expand_dims(eval(dcf_config["channel_weights"]), axis=(1, 2))
         if DCF.G is None:
             DCF.G = np.fft.fft2(self.get_gauss_response(self.roi_size))
             DCF.hanning_window = window_func_2d(self.roi_size, self.roi_size, shift_up=self.shift_hanning_window_up)
@@ -228,6 +229,7 @@ class DCF():
         fi = self.pre_process(fi)
         fftfi = np.fft.fft2(fi)
         Gi = self.Hi * fftfi
+        Gi *= self.channel_weights
         Gi = np.sum(Gi, axis=0)
         gi = np.real(np.fft.ifft2(Gi))
         # print('compte response debug:', debug)
@@ -378,8 +380,12 @@ class DCF():
         # print('img:', img)
         # img = (img - np.mean(img)) / (np.std(img) + 1e-5)
         if self.normalize_features:
-            img = img + np.min(img)
-            img = img / (np.max(img) + 1e-5)
+            # img = img + np.min(img)
+            # img = img / (np.max(img) + 1e-5)
+            mins = np.expand_dims(np.min(img, axis=(1, 2)), axis=(1, 2))
+            img -= mins
+            maxs = np.expand_dims(np.max(img, axis=(1, 2)), axis=(1, 2))
+            img /= (maxs + 1e-5)
 
         # window = window_func_2d(height, width)
         img = img * self.hanning_window

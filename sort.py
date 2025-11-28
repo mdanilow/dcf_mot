@@ -615,9 +615,15 @@ def run_experiment(args, config):
     # choosen_channels = [28, 23, 16, 11, 2, 35, 39, 43, 44, 45, 58, 63, 73, 76, 69, 25]
     # choosen_channels = [63, 51, 44, 25, 28, 11, 73, 14, 76, 19]   # crisp
     # choosen_channels = [35, 69, 45, 15, 0, 1] # mid
-    choosen_channels = [63, 51, 44, 25, 28, 11, 73, 14] # crisp 8
-    # choosen_channels = [63, 51, 44, 25, 28, 11, 73, 14, 76, 19, 35, 69, 45, 15, 0, 1] # crisp 16
-    features_channels = np.ix_([0], choosen_channels)
+    # choosen_channels = [63, 51, 44, 25, 28, 11, 73, 14] # crisp 8
+    choosen_channels = [
+        [63, 51, 44, 25, 28, 11, 73, 14, 76, 19, 35, 69, 45, 15, 0, 1]
+    ] # crisp 16
+    # choosen_channels = [
+    #     [63, 51, 44, 25, 28, 11, 73, 14],
+    #     list(range(8))
+    # ]
+    features_channels = [np.ix_([0], choosen_channels[i]) for i in range(len(choosen_channels))]
     plot_rows = 2
     plot_cols = int(np.ceil(len(seqnames) / 2))
     # psr_fig, psr_ax = plt.subplots(plot_rows, plot_cols, figsize=(15, 10))
@@ -668,24 +674,30 @@ def run_experiment(args, config):
                     # generate new frame
                     if use_dcf:
                         # frame_features_path = join(join(args.detections_dir, "mot17dets", seq, "features"), 'frame{}_f{}.npy'.format(frame - 1, dcf_config["use_conv_features"]))
-                        frame_features_path = join(seq_features_dir, 'frame{}_f{}.npy'.format(frame - 1, dcf_config["use_conv_features"]))
-                        frame_features = np.load(frame_features_path).astype(np.float32)
-                        frame_features = frame_features[features_channels]
+                        frame_features = []
+                        for i in dcf_config["use_conv_features"]:
+                            frame_features_path = join(seq_features_dir, 'frame{}_f{}.npy'.format(frame - 1, i))
+                            frame_features_i = np.load(frame_features_path).astype(np.float32)
+                            if i != 0:
+                                frame_features_i = frame_features_i[0].transpose(1, 2, 0)
+                                frame_features_i = cv2.resize(frame_features_i, (frame_features[0].shape[3], frame_features[0].shape[2]), interpolation=cv2.INTER_LINEAR)
+                                frame_features_i = np.expand_dims(frame_features_i.transpose(2, 0, 1), axis=0)
+                            frame_features.append(frame_features_i[features_channels[i]])
+                        frame_features = np.concatenate(frame_features, axis=1)
                     else:
                         frame_features = None
 
                     # variances = []
                     # for i in range(frame_features.shape[1]):
-                    #     print(i)
+                    #     # print(i)
                     #     ch = frame_features[0, i]
-                    #     variances.append(np.var(ch))
+                    #     # variances.append(np.var(ch))
                     #     test = ((ch - np.min(ch)) / (np.max(ch) - np.min(ch))) * 255
                     #     test = np.stack([test] * 3, axis=2)
                     #     cv2.imshow(str(i), test.astype(np.uint8))
                     # print(variances)
                     # print(np.argsort(variances))
                     # cv2.waitKey(0)
-
                     dets = seq_dets[seq_dets[:, 0] == (frame), 2:7]
                     dets[:, 2:4] += dets[:, 0:2] #convert to [x1,y1,w,h] to [x1,y1,x2,y2]
                     debug_img = cv2.imread(join(args.debug_images, seq, 'img1', '%06d.jpg'%(frame)))
@@ -713,9 +725,16 @@ def run_experiment(args, config):
                 for frame in pbar:
                     if use_dcf:
                         # frame_features_path = join(join(args.detections_dir, "mot17dets", seq, "features"), 'frame{}_f{}.npy'.format(frame - 1, dcf_config["use_conv_features"]))
-                        frame_features_path = join(seq_features_dir, 'frame{}_f{}.npy'.format(frame, dcf_config["use_conv_features"]))
-                        frame_features = np.load(frame_features_path).astype(np.float32)
-                        frame_features = frame_features[features_channels]
+                        frame_features = []
+                        for i in dcf_config["use_conv_features"]:
+                            frame_features_path = join(seq_features_dir, 'frame{}_f{}.npy'.format(frame, i))
+                            frame_features_i = np.load(frame_features_path).astype(np.float32)
+                            if i != 0:
+                                frame_features_i = frame_features_i[0].transpose(1, 2, 0)
+                                frame_features_i = cv2.resize(frame_features_i, (frame_features[0].shape[3], frame_features[0].shape[2]), interpolation=cv2.INTER_LINEAR)
+                                frame_features_i = np.expand_dims(frame_features_i.transpose(2, 0, 1), axis=0)
+                            frame_features.append(frame_features_i[features_channels[i]])
+                        frame_features = np.concatenate(frame_features, axis=1)
                     else:
                         frame_features = None
 

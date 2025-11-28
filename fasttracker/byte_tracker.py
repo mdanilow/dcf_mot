@@ -292,7 +292,7 @@ class BYTETracker(object):
         self.debug_history_afterupdate = []
         self.debug_modes = []
         # self.debug_modes = ["dcf_predict", "dcf_update_det"]
-        self.debug_modes = ["dcf_gating"]
+        self.debug_modes = ["dcf_predict"]
 
         self.dcf_histogram_data = []
         self.areas_to_psr = {}

@@ -16,8 +16,8 @@
         "biou_buffer_sizes": [0, 0]
     },
     "dcf_config": {
-        "use_conv_features": [0],
-        "channel_weights": "[1] * 16",
+        "use_conv_features": [0, 1],
+        "channel_weights": "np.array([1] * 8 + [1] * 8)",
         "update_strategy": "init",
         "roi_size": 64,
         "sigma": 7,
@@ -30,7 +30,7 @@
         "predict_position": false,
         "psr_peak_crop_size": 11,
         "liveness_fn": "compute_apce",
-        "lost_psr_th": 51,
+        "lost_psr_th": 45,
         "use_dcf_gating": false,
         "dcf_gating_th": 9,
         "dcf_gating_cost_th": 0.4,

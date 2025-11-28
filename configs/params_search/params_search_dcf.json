@@ -3,6 +3,6 @@
         "not_matched_for_lost_th": "[3]"
     },
     "dcf_config": {
-        "lost_psr_th": "list(range(56, 100, 2))"
+        "lost_psr_th": "list(range(30, 42, 2))"
     }
 }

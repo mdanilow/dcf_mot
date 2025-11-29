@@ -615,8 +615,8 @@ def run_experiment(args, config):
     # choosen_channels = [28, 23, 16, 11, 2, 35, 39, 43, 44, 45, 58, 63, 73, 76, 69, 25]
     # choosen_channels = [63, 51, 44, 25, 28, 11, 73, 14, 76, 19]   # crisp
     # choosen_channels = [35, 69, 45, 15, 0, 1] # mid
-    choosen_channels = [63, 51, 44, 25, 28, 11, 73, 14] # crisp 8
-    # choosen_channels = [63, 51, 44, 25, 28, 11, 73, 14, 76, 19, 35, 69, 45, 15, 0, 1] # crisp 16
+    # choosen_channels = [63, 51, 44, 25, 28, 11, 73, 14] # crisp 8
+    choosen_channels = [63, 51, 44, 25, 28, 11, 73, 14, 76, 19, 35, 69, 45, 15, 0, 1] # crisp 16
     features_channels = np.ix_([0], choosen_channels)
     plot_rows = 2
     plot_cols = int(np.ceil(len(seqnames) / 2))
@@ -633,10 +633,13 @@ def run_experiment(args, config):
         tracker_config = deepcopy(tracker_config_base)
         if seq == 'MOT17-06-FRCNN':
             tracker_config["track_buffer"] = 14
+            print('CHANGED track_buffer to', tracker_config["track_buffer"])
         elif seq == 'MOT17-14-FRCNN':
             tracker_config["track_buffer"] = 25
+            print('CHANGED track_buffer to', tracker_config["track_buffer"])
         else:
             tracker_config["track_buffer"] = 30
+            # print('CHANGED track_buffer to', tracker_config["track_buffer"])
 
         if seq == 'MOT17-01-FRCNN':
             tracker_config["det_conf_thresholds"][1] = 0.65

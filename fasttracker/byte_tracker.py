@@ -29,6 +29,10 @@ class STrack(BaseTrack):
 
         self.not_matched = 0
         self.is_occluded = False
+        self.left_occlusion = False
+        self.last_not_occluded_state = None
+        self.last_not_occluded_frame = -1
+        self.last_occluded_frame = -1
         self.score = score
         self.tracklet_len = 0
 
@@ -73,6 +77,7 @@ class STrack(BaseTrack):
         self.track_id = self.next_id()
         self.mean, self.covariance = self.kalman_filter.initiate(self.tlwh_to_xyah(self._tlwh))
         self.update_history(self.mean)
+        self.last_updated_state = self.mean.copy()
 
         self.tracklet_len = 0
         self.state = TrackState.Tracked
@@ -95,6 +100,7 @@ class STrack(BaseTrack):
             self.mean, self.covariance, self.tlwh_to_xyah(new_track.tlwh)
         )
         self.update_history(self.mean)
+        self.last_updated_state = self.mean.copy()
         self.not_matched = 0
         self.is_occluded = False
         self.occluded_len = 0
@@ -132,6 +138,7 @@ class STrack(BaseTrack):
         self.mean, self.covariance = self.kalman_filter.update(
             self.mean, self.covariance, self.tlwh_to_xyah(new_tlwh))
         self.update_history(self.mean)
+        self.last_updated_state = self.mean.copy()
         self.state = TrackState.Tracked
         self.is_activated = True
 
@@ -242,6 +249,12 @@ class BYTETracker(object):
                  debug_vis_scale=1,
                  det_score_division=1,
                  frame_rate=30):
+        print('Tracker config:')
+        print(tracker_config)
+        if dcf_config is not None:
+            print('DCF config:')
+            print(dcf_config)
+
         self.tracked_stracks = []  # type: list[STrack]
         self.lost_stracks = []  # type: list[STrack]
         self.removed_stracks = []  # type: list[STrack]
@@ -291,11 +304,12 @@ class BYTETracker(object):
         self.debug_history_locpred = []
         self.debug_history_afterupdate = []
         self.debug_modes = []
-        # self.debug_modes = ["dcf_predict", "dcf_update_det"]
-        self.debug_modes = ["dcf_gating"]
+        # self.debug_modes = ["dcf_update_det"]
+        # self.debug_modes = ["dcf_gating"]
 
         self.dcf_histogram_data = []
         self.areas_to_psr = {}
+        self.saved_idx = 0
 
 
     def update(self, output_results, features=None, debug_img=None, debug=None):
@@ -357,8 +371,8 @@ class BYTETracker(object):
                                             in_detections=output_results,
                                             frame_number=self.frame_count,
                                             dcf=self.use_dcf)
-            from utils import draw_bboxes
-            draw_bboxes(vis_img, np.array([[0, 0, self.dcf_min_w, self.dcf_min_h]]))
+            # from utils import draw_bboxes
+            # draw_bboxes(vis_img, np.array([[0, 0, self.dcf_min_w, self.dcf_min_h]]))
             self.debug_history_itstart.append(vis_img)  
 
         ''' Step 2: First association, with high score detection boxes'''
@@ -465,6 +479,8 @@ class BYTETracker(object):
                     track.mark_lost()
                     lost_stracks.append(track)
                 else:
+                    if debug is not None:
+                        print('TRKID{} still tracked with dcf'.format(track.track_id))
                     track.update_history(track.mean)
                     track.dcf.update_filter(
                         features=features,
@@ -473,12 +489,35 @@ class BYTETracker(object):
                             (debug is not None and "dcf_update_pred" in self.debug_modes)
                             else None
                     )
+                    # refind_stracks.append(track)
         if self.handle_occlusion:
             trackers_for_occlusion = [t for t in self.lost_stracks if t.state == TrackState.Lost]
             occluders = activated_starcks + refind_stracks
+            # occluders = activated_starcks
             # if len(trackers_for_occlusion) > 0:
                 # print('trackers_for_occlusion', [t.track_id for t in trackers_for_occlusion])
             self.occlusion_handling(trackers_for_occlusion, occluders)
+            '''Try to reidentify recently occluded lost object with low score detections'''
+            recently_occluded_lost_objects = [t for t in self.lost_stracks
+                                              if (t.left_occlusion and self.frame_count - t.last_occluded_frame < 10)]
+            # for t in recently_occluded_lost_objects:
+            detections_for_occlusion_reid = [detections_second[i] for i in u_detection_second]
+            dists = matching.iou_distance(recently_occluded_lost_objects, detections_for_occlusion_reid)
+            # matching.print_cost_matrix(recently_occluded_lost_objects, detections_for_occlusion_reid, dists, masking_mode="1 or more")
+            occ_matches, _, _ = matching.linear_assignment(dists, thresh=0.6)
+            for itrack, idet in occ_matches:
+                track = recently_occluded_lost_objects[itrack]
+                det = detections_for_occlusion_reid[idet]
+                # print("recently occluded track {} found with det {}".format(track.track_id, det.det_idx))
+                track.re_activate(det,
+                                  self.frame_count,
+                                  new_id=False,
+                                  features=features,
+                                  debug="re_activate trkid{} with det{}".format(track.track_id, det.det_idx) if
+                                        (debug is not None and "dcf_update_det" in self.debug_modes)
+                                        else None
+                )
+                refind_stracks.append(track)
 
         '''Deal with unconfirmed tracks, usually tracks with only one beginning frame'''
         detections = [detections[i] for i in u_detection]
@@ -550,15 +589,25 @@ class BYTETracker(object):
 
         if debug:
             vis_img = draw_frame_info_byte(img=debug_img,
-                                           trackers=self.tracked_stracks,
-                                           lost_trackers=self.lost_stracks,
-                                            # trackers=[t for t in self.tracked_stracks if t.track_id == 74],
-                                            # lost_trackers=[t for t in self.lost_stracks if t.track_id == 74],
-                                            in_detections=output_results,
+                                        #    trackers=self.tracked_stracks,
+                                        #    lost_trackers=self.lost_stracks,
+                                            # lost_trackers=[],
+                                            trackers=[t for t in self.tracked_stracks if t.track_id in [2, 12, 18]],
+                                            lost_trackers=[t for t in self.lost_stracks if t.track_id in [2, 12, 18]],
+                                            # in_detections=output_results,
+                                            in_detections=[det for det in (detections + detections_second) if det.det_idx == 14] if self.frame_count == 249 else [],
+                                            # in_detections=[],
                                             frame_number=self.frame_count,
                                             scale=self.debug_vis_scale,
                                             dcf=(self.dcf_config is not None),
                                             det_conf_th=self.det_conf_thresholds[0])
+            vis_Frames = [154, 179, 191, 199, 209, 219, 226, 239, 249]
+            if self.frame_count in vis_Frames:
+                cv2.imwrite("figures/occ{}.png".format(vis_Frames[self.saved_idx]), vis_img[435:678, 1024:1232, :])
+                print("figures/occ{}.png".format(vis_Frames[self.saved_idx]), "saved")
+                self.saved_idx += 1
+
+            # if self.frame_count >= 116 and self.frame_count <= 128:
             self.debug_history_afterupdate.append(vis_img)
 
         output = []
@@ -572,6 +621,18 @@ class BYTETracker(object):
 
 
     def occlusion_handling(self, tracks, occluders):
+        for track in occluders:
+            occluded_by_any = False
+            for other in occluders:
+                if track.track_id == other.track_id:
+                    continue
+                if is_occluded_by(track.tlbr, other.tlbr, iou_thresh=0.1):
+                    occluded_by_any = True
+                    break
+            if not occluded_by_any:
+                track.last_not_occluded_state = track.mean.copy()
+                track.last_not_occluded_frame = self.frame_count
+
         for track in tracks:
             if track.is_occluded:
                 still_occluded = False
@@ -579,9 +640,11 @@ class BYTETracker(object):
                     if is_occluded_by(track.tlbr, occluder.tlbr, self.occ_overlap_thresh):
                         still_occluded = True
                         track.occluded_len += 1
+                        track.last_occluded_frame = self.frame_count
                         break
                 track.is_occluded = still_occluded
                 if not still_occluded:
+                    track.left_occlusion = True
                     track.occluded_len = self.occ_time_left_after_occlusion + self.frame_count - track.end_frame - self.max_time_lost
                     # print('trkid{} time left:'.format(track.track_id), self.frame_count - track.end_frame - self.max_time_lost - track.occluded_len)
 
@@ -594,15 +657,23 @@ class BYTETracker(object):
             else:
                 for occluder in occluders:
                     if is_occluded_by(track.tlbr, occluder.tlbr, self.occ_overlap_thresh):
+                        # print('track {} was last not occluded {} frames ago on frame {}'.format(track.track_id, self.frame_count - track.last_not_occluded_frame, track.last_not_occluded_frame))
                         # reset and reduce velocity
-                        track.mean[4:8] = track.mean_history[-min(self.occ_velocity_rewind, len(track.mean_history))][4:8]
+                        # track.mean[4:8] = track.mean_history[-min(self.occ_velocity_rewind, len(track.mean_history))][4:8]
+                        if track.last_not_occluded_state is not None:
+                            track.mean[4:8] = track.last_not_occluded_state[4:8]
+                            # track.mean = track.last_not_occluded_state
                         # rewind position
-                        track.mean[:4] = track.mean_history[-min(self.occ_position_rewind, len(track.mean_history))][:4]
+                        # track.mean[:4] = track.mean_history[-min(self.occ_position_rewind, len(track.mean_history))][:4]
+                        # track.mean[:4] = track.last_updated_state[:4]
+
                         # Enlarge once
                         # if track.occluded_len == 0:
                         #     track.mean[3] *= self.occ_enlarge_bbox  # increase height
                         track.is_occluded = True
                         track.occluded_len = 1
+                        track.last_occluded_frame = self.frame_count
+                        track.left_occlusion = False
                         break
                 # if is_occluded_by_many(track, occluders, self.occ_overlap_thresh, self.occ_many_min_iou):
                 #     track.is_occluded = True

@@ -123,18 +123,21 @@ def draw_frame_info_byte(img, trackers, lost_trackers, in_detections, frame_numb
     trackers_info = {"id": [t.track_id for t in trackers],
                     #  "Ac": [t.is_activated for t in trackers],
                     #  "Occ": [t.is_occluded for t in trackers]
-                    "a": [int(t.area) for t in trackers]
+                    # "a": [int(t.area) for t in trackers]
+                    # "lno": [track.last_not_occluded_frame for track in trackers]
                      }
     lost_trackers_info = {"id": [t.track_id for t in lost_trackers],
                         # "Ac": [t.is_activated for t in lost_trackers],
-                        #  "Occ": [t.is_occluded for t in lost_trackers]
-                        "a": [int(t.tlwh[2] * t.tlwh[3]) for t in lost_trackers]
+                        #  "Occ": [t.is_occluded for t in lost_trackers],
+                        # "lno": [track.last_not_occluded_frame for track in lost_trackers],
+                        # "lo": [track.last_occluded_frame for track in lost_trackers]
+                        # "a": [int(t.tlwh[2] * t.tlwh[3]) for t in lost_trackers]
                         }
     if dcf:
-        dcf_info = {"psr": ["{:.1f}".format(t.dcf.psr) for t in trackers],
+        dcf_info = {"apce": ["{:.1f}".format(t.dcf.psr) for t in trackers],
                     # "m_res": ["{:.2f}".format(t.dcf.max_response) for t in trackers]
                     }
-        lost_dcf_info = {"psr": ["{:.1f}".format(t.dcf.psr) for t in lost_trackers],
+        lost_dcf_info = {"apce": ["{:.1f}".format(t.dcf.psr) for t in lost_trackers],
                         # "m_res": ["{:.2f}".format(t.dcf.max_response) for t in lost_trackers]
                         }
         trackers_info.update(dcf_info)

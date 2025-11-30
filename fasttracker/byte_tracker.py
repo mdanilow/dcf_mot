@@ -344,6 +344,7 @@ class BYTETracker(object):
             '''Detections'''
             detections = [STrack(STrack.tlbr_to_tlwh(tlbr), s, det_idx=[idx for idx, x in enumerate(remain_inds) if x][i])
                           for i, (tlbr, s) in enumerate(zip(dets, scores_keep))]
+            detections_first = detections.copy()
         else:
             detections = []
         if len(dets_second) > 0:
@@ -489,7 +490,7 @@ class BYTETracker(object):
                             (debug is not None and "dcf_update_pred" in self.debug_modes)
                             else None
                     )
-                    # refind_stracks.append(track)
+                    refind_stracks.append(track)
         if self.handle_occlusion:
             trackers_for_occlusion = [t for t in self.lost_stracks if t.state == TrackState.Lost]
             occluders = activated_starcks + refind_stracks
@@ -588,24 +589,26 @@ class BYTETracker(object):
         # get scores of lost tracks
 
         if debug:
+            det_ids = [15, 6, 14]
+            frame_to_vis_det = {154: 15, 179:6, 191: 14, 249:14}
             vis_img = draw_frame_info_byte(img=debug_img,
                                         #    trackers=self.tracked_stracks,
                                         #    lost_trackers=self.lost_stracks,
                                             # lost_trackers=[],
-                                            trackers=[t for t in self.tracked_stracks if t.track_id in [2, 12, 18]],
+                                            trackers=[t for t in self.tracked_stracks if t.track_id in [2,12, 18]],
                                             lost_trackers=[t for t in self.lost_stracks if t.track_id in [2, 12, 18]],
                                             # in_detections=output_results,
-                                            in_detections=[det for det in (detections + detections_second) if det.det_idx == 14] if self.frame_count == 249 else [],
+                                            in_detections=[det for det in (detections_first + detections_second) if det.det_idx == frame_to_vis_det[self.frame_count]] if self.frame_count in frame_to_vis_det else [],
                                             # in_detections=[],
                                             frame_number=self.frame_count,
                                             scale=self.debug_vis_scale,
                                             dcf=(self.dcf_config is not None),
                                             det_conf_th=self.det_conf_thresholds[0])
-            vis_Frames = [154, 179, 191, 199, 209, 219, 226, 239, 249]
-            if self.frame_count in vis_Frames:
-                cv2.imwrite("figures/occ{}.png".format(vis_Frames[self.saved_idx]), vis_img[435:678, 1024:1232, :])
-                print("figures/occ{}.png".format(vis_Frames[self.saved_idx]), "saved")
-                self.saved_idx += 1
+            # vis_Frames = [154, 179, 191, 199, 209, 219, 226, 239, 249]
+            # if self.frame_count in vis_Frames:
+            #     cv2.imwrite("figures/occ{}.png".format(vis_Frames[self.saved_idx]), vis_img[435:678, 1024:1232, :])
+            #     # print("figures/noocc{}.png".format(vis_Frames[self.saved_idx]), "saved")
+            #     self.saved_idx += 1
 
             # if self.frame_count >= 116 and self.frame_count <= 128:
             self.debug_history_afterupdate.append(vis_img)

@@ -45,7 +45,10 @@ def draw_bboxes(img, dets, color=(0, 0, 255), xywh_layout=False, id_to_color=Non
         line_height = 17
         y_pos = xywh[1] - line_height * len(info_dict.keys()) if label_position == "over" else xywh[1] + 14
         for i, (key, values) in enumerate(info_dict.items()):
-            text = key + ": {}".format(values[idx])
+            if key == "":
+                text = str(values[idx])
+            else:
+                text = key + ": {}".format(values[idx])
             img = cv2.putText(img, text,
                             (xywh[0] + 3, y_pos + line_height * i),
                             cv2.FONT_HERSHEY_SIMPLEX,
@@ -120,15 +123,15 @@ def draw_frame_info_byte(img, trackers, lost_trackers, in_detections, frame_numb
     else:
         detections_info = {"idx": [d.det_idx for d in in_detections if d.score >= det_conf_th],
                         "conf": ["{:.2f}".format(d.score) for d in in_detections if d.score >= det_conf_th]}
-    trackers_info = {"id": [t.track_id for t in trackers],
+    trackers_info = {"": [t.track_id for t in trackers],
                     #  "Ac": [t.is_activated for t in trackers],
                     #  "Occ": [t.is_occluded for t in trackers]
-                    "a": [int(t.area) for t in trackers]
+                    # "a": [int(t.area) for t in trackers]
                      }
-    lost_trackers_info = {"id": [t.track_id for t in lost_trackers],
+    lost_trackers_info = {"": [t.track_id for t in lost_trackers],
                         # "Ac": [t.is_activated for t in lost_trackers],
                         #  "Occ": [t.is_occluded for t in lost_trackers]
-                        "a": [int(t.tlwh[2] * t.tlwh[3]) for t in lost_trackers]
+                        # "a": [int(t.tlwh[2] * t.tlwh[3]) for t in lost_trackers]
                         }
     if dcf:
         dcf_info = {"psr": ["{:.1f}".format(t.dcf.psr) for t in trackers],

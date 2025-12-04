@@ -89,6 +89,7 @@ class STrack(BaseTrack):
                            features=features,
                            bbox=scale_f_coords(STrack.img_shape, np.expand_dims(self.tlbr, axis=0), features.shape[2:])[0],
                            debug=debug)
+            self.dcf_update_phase = frame_id % STrack.dcf_config["update_period"]
 
     def re_activate(self, new_track, frame_id, new_id=False, features=None, debug=None):
         self.mean, self.covariance = self.kalman_filter.update(
@@ -113,6 +114,7 @@ class STrack(BaseTrack):
                 bbox=scale_f_coords(STrack.img_shape, np.expand_dims(self.tlbr, axis=0), features.shape[2:])[0],
                 debug=debug
             )
+            self.dcf_update_phase = frame_id % STrack.dcf_config["update_period"]
 
     def update(self, new_track, frame_id, features=None, debug=None):
         """
@@ -137,7 +139,7 @@ class STrack(BaseTrack):
 
         self.score = new_track.score
 
-        if STrack.dcf_config is not None:
+        if STrack.dcf_config is not None and (self.dcf_update_phase == frame_id % STrack.dcf_config["update_period"]):
             self.dcf_updated_at_frame = frame_id
             self.dcf.update_filter(
                 features=features,
@@ -357,8 +359,8 @@ class BYTETracker(object):
                                             in_detections=output_results,
                                             frame_number=self.frame_count,
                                             dcf=self.use_dcf)
-            from utils import draw_bboxes
-            draw_bboxes(vis_img, np.array([[0, 0, self.dcf_min_w, self.dcf_min_h]]))
+            # from utils import draw_bboxes
+            # draw_bboxes(vis_img, np.array([[0, 0, self.dcf_min_w, self.dcf_min_h]]))
             self.debug_history_itstart.append(vis_img)  
 
         ''' Step 2: First association, with high score detection boxes'''
@@ -473,6 +475,7 @@ class BYTETracker(object):
                             (debug is not None and "dcf_update_pred" in self.debug_modes)
                             else None
                     )
+                    track.dcf_update_phase = self.frame_count % STrack.dcf_config["update_period"]
         if self.handle_occlusion:
             trackers_for_occlusion = [t for t in self.lost_stracks if t.state == TrackState.Lost]
             occluders = activated_starcks + refind_stracks

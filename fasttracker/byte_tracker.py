@@ -11,6 +11,7 @@ import cv2
 from .kalman_filter import KalmanFilter
 from . import matching
 from .basetrack import BaseTrack, TrackState
+from .gmc import GMC
 from box_tracker import DCF
 from utils import clip_coords, scale_coords, scale_f_coords, is_outside_image, is_touching_img_borders, draw_frame_info_byte
 
@@ -23,7 +24,7 @@ class STrack(BaseTrack):
         self._tlwh = np.asarray(tlwh, dtype=np.float64)
         self.kalman_filter = None
         self.mean, self.covariance = None, None
-        self.mean_nowhpred = None
+        # self.mean_nowhpred = None
         self.mean_history = []
         self.is_activated = False
 
@@ -42,6 +43,7 @@ class STrack(BaseTrack):
     def predict(self):
         mean_state = self.mean.copy()
         if self.state != TrackState.Tracked:
+            mean_state[6] = 0
             mean_state[7] = 0
         self.mean, self.covariance = self.kalman_filter.predict(mean_state, self.covariance)
 
@@ -52,11 +54,30 @@ class STrack(BaseTrack):
             multi_covariance = np.asarray([st.covariance for st in stracks])
             for i, st in enumerate(stracks):
                 if st.state != TrackState.Tracked:
+                    multi_mean[i][6] = 0
                     multi_mean[i][7] = 0
             multi_mean, multi_covariance = STrack.shared_kalman.multi_predict(multi_mean, multi_covariance)
             for i, (mean, cov) in enumerate(zip(multi_mean, multi_covariance)):
                 # stracks[i].mean_nowhpred = stracks[i].mean.copy()
                 # stracks[i].mean_nowhpred[:2] = mean[:2]
+                stracks[i].mean = mean
+                stracks[i].covariance = cov
+
+    @staticmethod
+    def multi_gmc(stracks, H=np.eye(2, 3)):
+        if len(stracks) > 0:
+            multi_mean = np.asarray([st.mean.copy() for st in stracks])
+            multi_covariance = np.asarray([st.covariance for st in stracks])
+
+            R = H[:2, :2]
+            R8x8 = np.kron(np.eye(4, dtype=float), R)
+            t = H[:2, 2]
+
+            for i, (mean, cov) in enumerate(zip(multi_mean, multi_covariance)):
+                mean = R8x8.dot(mean)
+                mean[:2] += t
+                cov = R8x8.dot(cov).dot(R8x8.transpose())
+
                 stracks[i].mean = mean
                 stracks[i].covariance = cov
 
@@ -75,7 +96,7 @@ class STrack(BaseTrack):
         """Start a new tracklet"""
         self.kalman_filter = kalman_filter
         self.track_id = self.next_id()
-        self.mean, self.covariance = self.kalman_filter.initiate(self.tlwh_to_xyah(self._tlwh))
+        self.mean, self.covariance = self.kalman_filter.initiate(self.tlwh_to_xywh(self._tlwh))
         self.update_history(self.mean)
         self.last_updated_state = self.mean.copy()
 
@@ -96,9 +117,7 @@ class STrack(BaseTrack):
                            debug=debug)
 
     def re_activate(self, new_track, frame_id, new_id=False, features=None, debug=None):
-        self.mean, self.covariance = self.kalman_filter.update(
-            self.mean, self.covariance, self.tlwh_to_xyah(new_track.tlwh)
-        )
+        self.mean, self.covariance = self.kalman_filter.update(self.mean, self.covariance, self.tlwh_to_xywh(new_track.tlwh))
         self.update_history(self.mean)
         self.last_updated_state = self.mean.copy()
         self.not_matched = 0
@@ -135,8 +154,7 @@ class STrack(BaseTrack):
         self.tracklet_len += 1
 
         new_tlwh = new_track.tlwh
-        self.mean, self.covariance = self.kalman_filter.update(
-            self.mean, self.covariance, self.tlwh_to_xyah(new_tlwh))
+        self.mean, self.covariance = self.kalman_filter.update(self.mean, self.covariance, self.tlwh_to_xywh(new_tlwh))
         self.update_history(self.mean)
         self.last_updated_state = self.mean.copy()
         self.state = TrackState.Tracked
@@ -153,7 +171,6 @@ class STrack(BaseTrack):
             )
 
     @property
-    # @jit(nopython=True)
     def tlwh(self):
         """Get current position in bounding box format `(top left x, top left y,
                 width, height)`.
@@ -161,21 +178,28 @@ class STrack(BaseTrack):
         if self.mean is None:
             return self._tlwh.copy()
         ret = self.mean[:4].copy()
-        ret[2] *= ret[3]
         ret[:2] -= ret[2:] / 2
         return ret
     
+    # @property
+    # def tlwh_nowhpred(self):
+    #     if self.mean_nowhpred is None:
+    #         return self._tlwh.copy()
+    #     ret = self.mean_nowhpred[:4].copy()
+    #     ret[2] *= ret[3]
+    #     ret[:2] -= ret[2:] / 2
+    #     return ret
+
     @property
-    def tlwh_nowhpred(self):
-        if self.mean_nowhpred is None:
-            return self._tlwh.copy()
-        ret = self.mean_nowhpred[:4].copy()
-        ret[2] *= ret[3]
-        ret[:2] -= ret[2:] / 2
+    def xywh(self):
+        """Convert bounding box to format `(min x, min y, max x, max y)`, i.e.,
+        `(top left, bottom right)`.
+        """
+        ret = self.tlwh.copy()
+        ret[:2] += ret[2:] / 2.0
         return ret
 
     @property
-    # @jit(nopython=True)
     def tlbr(self):
         """Convert bounding box to format `(min x, min y, max x, max y)`, i.e.,
         `(top left, bottom right)`.
@@ -184,11 +208,11 @@ class STrack(BaseTrack):
         ret[2:] += ret[:2]
         return ret
     
-    @property
-    def tlbr_nowhpred(self):
-        ret = self.tlwh_nowhpred.copy()
-        ret[2:] += ret[:2]
-        return ret
+    # @property
+    # def tlbr_nowhpred(self):
+    #     ret = self.tlwh_nowhpred.copy()
+    #     ret[2:] += ret[:2]
+    #     return ret
     
     @property
     def area(self):
@@ -210,18 +234,16 @@ class STrack(BaseTrack):
         return tlwh
 
     @staticmethod
-    # @jit(nopython=True)
-    def tlwh_to_xyah(tlwh):
-        """Convert bounding box to format `(center x, center y, aspect ratio,
-        height)`, where the aspect ratio is `width / height`.
+    def tlwh_to_xywh(tlwh):
+        """Convert bounding box to format `(center x, center y, width,
+        height)`.
         """
         ret = np.asarray(tlwh).copy()
         ret[:2] += ret[2:] / 2
-        ret[2] /= ret[3]
         return ret
 
-    def to_xyah(self):
-        return self.tlwh_to_xyah(self.tlwh)
+    def to_xywh(self):
+        return self.tlwh_to_xywh(self.tlwh)
 
     @staticmethod
     # @jit(nopython=True)
@@ -287,6 +309,11 @@ class BYTETracker(object):
         self.init_iou_suppress = tracker_config["init_iou_suppress"]
         self.not_matched_for_lost_th = tracker_config["not_matched_for_lost_th"]
         self.biou_buffer_sizes = tracker_config["biou_buffer_sizes"]
+        self.cmc_method = tracker_config["cmc_method"]
+        self.use_cmc = self.cmc_method != "none"
+        if self.use_cmc:
+            self.gmc = GMC(method=self.cmc_method)
+            
         # occlusion options
         self.handle_occlusion = tracker_config["handle_occlusion"]
         if self.handle_occlusion:
@@ -378,6 +405,7 @@ class BYTETracker(object):
 
         ''' Step 2: First association, with high score detection boxes'''
         strack_pool = joint_stracks(tracked_stracks, self.lost_stracks)
+
         # # EXPERIMENTS
         # if self.use_dcf:
         #     for track in strack_pool:
@@ -398,8 +426,15 @@ class BYTETracker(object):
         #             else:
         #                 self.areas_to_psr[area] = [track.dcf.psr]
         #             self.dcf_histogram_data.append(track.dcf.psr)
+        
         # Predict the current location with KF
         STrack.multi_predict(strack_pool)
+
+        # Fix camera motion
+        warp = self.gmc.apply(debug_img, dets)
+        STrack.multi_gmc(strack_pool, warp)
+        STrack.multi_gmc(unconfirmed, warp)
+
         dists = matching.iou_distance(strack_pool, detections, biou=self.biou_buffer_sizes[0])
         # if not self.args.mot20:
         dists = matching.fuse_score(dists, detections)
@@ -592,13 +627,13 @@ class BYTETracker(object):
             det_ids = [15, 6, 14]
             frame_to_vis_det = {154: 15, 179:6, 191: 14, 249:14}
             vis_img = draw_frame_info_byte(img=debug_img,
-                                        #    trackers=self.tracked_stracks,
-                                        #    lost_trackers=self.lost_stracks,
+                                           trackers=self.tracked_stracks,
+                                           lost_trackers=self.lost_stracks,
                                             # lost_trackers=[],
-                                            trackers=[t for t in self.tracked_stracks if t.track_id in [2,12, 18]],
-                                            lost_trackers=[t for t in self.lost_stracks if t.track_id in [2, 12, 18]],
-                                            # in_detections=output_results,
-                                            in_detections=[det for det in (detections_first + detections_second) if det.det_idx == frame_to_vis_det[self.frame_count]] if self.frame_count in frame_to_vis_det else [],
+                                            # trackers=[t for t in self.tracked_stracks if t.track_id in [2,12, 18]],
+                                            # lost_trackers=[t for t in self.lost_stracks if t.track_id in [2, 12, 18]],
+                                            in_detections=output_results,
+                                            # in_detections=[det for det in (detections_first + detections_second) if det.det_idx == frame_to_vis_det[self.frame_count]] if self.frame_count in frame_to_vis_det else [],
                                             # in_detections=[],
                                             frame_number=self.frame_count,
                                             scale=self.debug_vis_scale,

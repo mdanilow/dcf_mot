@@ -727,8 +727,9 @@ def run_experiment(args, config):
                     dets[:, 2:4] += dets[:, 0:2] #convert to [x1,y1,w,h] to [x1,y1,x2,y2]
                     total_frames += 1
 
+                    debug_img = cv2.imread(join(args.debug_images, seq, 'img1', '%06d.jpg'%(frame)))
                     start_time = time.time()
-                    trackers = mot_tracker.update(dets, features=frame_features)
+                    trackers = mot_tracker.update(dets, features=frame_features, debug_img=debug_img)
                     cycle_time = time.time() - start_time
                     # print('cycle time:', cycle_time)
                     total_time += cycle_time

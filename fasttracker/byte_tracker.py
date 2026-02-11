@@ -431,9 +431,10 @@ class BYTETracker(object):
         STrack.multi_predict(strack_pool)
 
         # Fix camera motion
-        warp = self.gmc.apply(debug_img, dets)
-        STrack.multi_gmc(strack_pool, warp)
-        STrack.multi_gmc(unconfirmed, warp)
+        if self.use_cmc:
+            warp = self.gmc.apply(debug_img, dets)
+            STrack.multi_gmc(strack_pool, warp)
+            STrack.multi_gmc(unconfirmed, warp)
 
         dists = matching.iou_distance(strack_pool, detections, biou=self.biou_buffer_sizes[0])
         # if not self.args.mot20:
@@ -474,7 +475,7 @@ class BYTETracker(object):
                                                 debug=debug if "dcf_gating" in self.debug_modes else None)
         else:
             dists = matching.iou_distance(r_tracked_stracks, detections_second, biou=self.biou_buffer_sizes[1])
-        matches, u_track, u_detection_second = matching.linear_assignment(dists, thresh=0.5)
+        matches, u_track, u_detection_second = matching.linear_assignment(dists, thresh=self.match_thresholds[1])
         for itracked, idet in matches:
             track = r_tracked_stracks[itracked]
             det = detections_second[idet]

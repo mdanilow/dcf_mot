@@ -631,15 +631,12 @@ def run_experiment(args, config):
             img_shape = None
 
         tracker_config = deepcopy(tracker_config_base)
-        if seq == 'MOT17-06-FRCNN':
-            tracker_config["track_buffer"] = 14
-            print('CHANGED track_buffer to', tracker_config["track_buffer"])
-        elif seq == 'MOT17-14-FRCNN':
-            tracker_config["track_buffer"] = 25
-            print('CHANGED track_buffer to', tracker_config["track_buffer"])
+        if seq == 'MOT17-05-FRCNN' or seq == 'MOT17-06-FRCNN':
+            args.track_buffer = 14
+        elif seq == 'MOT17-13-FRCNN' or seq == 'MOT17-14-FRCNN':
+            args.track_buffer = 25
         else:
-            tracker_config["track_buffer"] = 30
-            # print('CHANGED track_buffer to', tracker_config["track_buffer"])
+            args.track_buffer = 30
 
         if seq == 'MOT17-01-FRCNN':
             tracker_config["det_conf_thresholds"][1] = 0.65

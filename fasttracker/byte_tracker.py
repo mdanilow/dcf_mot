@@ -113,7 +113,7 @@ class STrack(BaseTrack):
             self.dcf = DCF(dcf_config=STrack.dcf_config,
                            img_shape=STrack.img_shape,
                            features=features,
-                           bbox=scale_f_coords(STrack.img_shape, np.expand_dims(self.tlbr, axis=0), features.shape[2:])[0],
+                           bbox=self.tlbr,
                            debug=debug)
 
     def re_activate(self, new_track, frame_id, new_id=False, features=None, debug=None):
@@ -135,7 +135,7 @@ class STrack(BaseTrack):
             self.dcf_updated_at_frame = frame_id
             self.dcf.update_filter(
                 features=features,
-                bbox=scale_f_coords(STrack.img_shape, np.expand_dims(self.tlbr, axis=0), features.shape[2:])[0],
+                bbox=self.tlbr,
                 debug=debug
             )
 
@@ -166,7 +166,7 @@ class STrack(BaseTrack):
             self.dcf_updated_at_frame = frame_id
             self.dcf.update_filter(
                 features=features,
-                bbox=scale_f_coords(STrack.img_shape, np.expand_dims(self.tlbr, axis=0), features.shape[2:])[0],
+                bbox=self.tlbr,
                 debug=debug
             )
 
@@ -271,11 +271,11 @@ class BYTETracker(object):
                  debug_vis_scale=1,
                  det_score_division=1,
                  frame_rate=30):
-        print('Tracker config:')
-        print(tracker_config)
-        if dcf_config is not None:
-            print('DCF config:')
-            print(dcf_config)
+        # print('Tracker config:')
+        # print(tracker_config)
+        # if dcf_config is not None:
+            # print('DCF config:')
+            # print(dcf_config)
 
         self.tracked_stracks = []  # type: list[STrack]
         self.lost_stracks = []  # type: list[STrack]
@@ -286,9 +286,10 @@ class BYTETracker(object):
         if self.use_dcf:
             self.lost_psr_th = dcf_config["lost_psr_th"]
             self.use_dcf_gating = dcf_config["use_dcf_gating"]
-            self.dcf_gating_th = dcf_config["dcf_gating_th"]
-            self.dcf_gating_cost_th = dcf_config["dcf_gating_cost_th"]
-            self.dcf_gating_candidate_cost_th = dcf_config["dcf_gating_candidate_cost_th"]
+            if self.use_dcf_gating:
+                self.dcf_gating_th = dcf_config["dcf_gating_th"]
+                self.dcf_gating_cost_th = dcf_config["dcf_gating_cost_th"]
+                self.dcf_gating_candidate_cost_th = dcf_config["dcf_gating_candidate_cost_th"]
             self.use_dcf_reid = dcf_config["use_dcf_reid"]
             self.dcf_reid_th = dcf_config["dcf_reid_th"]
             self.dcf_min_h = img_shape[0] * 64 / 1080
@@ -330,7 +331,7 @@ class BYTETracker(object):
         self.debug_history_itstart = []
         self.debug_history_locpred = []
         self.debug_history_afterupdate = []
-        self.debug_modes = []
+        self.debug_modes = ["dcf_predict"]
         # self.debug_modes = ["dcf_update_det"]
         # self.debug_modes = ["dcf_gating"]
 
@@ -366,6 +367,23 @@ class BYTETracker(object):
         dets = bboxes[remain_inds]
         scores_keep = scores[remain_inds]
         scores_second = scores[inds_second]
+
+        # pad features for dcf
+        if self.use_dcf:
+            if len(features.shape) == 4:
+                features = features[0]
+            DCF.unpadded_features_shape = features.shape
+            if self.dcf_config["search_region_scale"] != 1:
+                x_pad = features.shape[2] // 2
+                y_pad = features.shape[1] // 2
+                DCF.feature_pad_xy = (x_pad, y_pad)
+                # to HWC
+                features = features.transpose(1, 2, 0)
+                # pad_start = time.time()
+                features = cv2.copyMakeBorder(features, y_pad, y_pad, x_pad, x_pad, cv2.BORDER_REFLECT)
+                # pad_end = time.time()
+                # to CHW
+                features = features.transpose(2, 0, 1)
 
         if len(dets) > 0:
             '''Detections'''
@@ -521,7 +539,7 @@ class BYTETracker(object):
                     track.update_history(track.mean)
                     track.dcf.update_filter(
                         features=features,
-                        bbox=scale_f_coords(STrack.img_shape, np.expand_dims(track.tlbr, axis=0), features.shape[2:])[0],
+                        bbox=track.tlbr,
                         debug="update trkid{} with prediction".format(track.track_id) if
                             (debug is not None and "dcf_update_pred" in self.debug_modes)
                             else None

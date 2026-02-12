@@ -184,6 +184,7 @@ class DCF():
 
     G = None
     hanning_window = None
+    feature_pad_xy = (0, 0)
 
     def __init__(self, dcf_config, img_shape, features, bbox, debug=None):
         self.img_shape = img_shape
@@ -238,8 +239,8 @@ class DCF():
     
 
     def predict_displacement(self, features, bbox, update_psr=False, debug=None):
-        features_bbox = scale_f_coords(self.img_shape, np.expand_dims(bbox, axis=0), features.shape[2:])
-        response = self.compute_response(features, features_bbox[0], debug=debug)
+        # features_bbox = scale_f_coords(self.img_shape, np.expand_dims(bbox, axis=0), features.shape[2:])
+        response = self.compute_response(features, bbox, debug=debug)
         max_value = np.max(response)
         self.max_response = max_value
         max_pos = np.where(response == max_value)
@@ -256,7 +257,7 @@ class DCF():
         dx /= self.x_scale
         dy /= self.y_scale
         # scale from features dimension to image dimension
-        displacement = scale_coords(features.shape[2:], np.array([[dx, dy, dx, dy]]), self.img_shape)[0]
+        displacement = scale_coords(DCF.unpadded_features_shape, np.array([[dx, dy, dx, dy]]), self.img_shape)[0]
         if update_psr:
             self.predicted_displacement = displacement[:2]
 
@@ -308,6 +309,13 @@ class DCF():
         # start = time.time()
         if len(features.shape) == 4:
             features = features[0]
+
+        # scale bbox from img dimensions to features dimension, take feature padding into account
+        bbox = scale_f_coords(self.img_shape,
+            np.expand_dims(bbox, axis=0),
+            DCF.unpadded_features_shape[1:]
+        )[0]
+
         xmin, ymin, xmax, ymax = bbox[:4]
         width = xmax - xmin
         height = ymax - ymin
@@ -324,19 +332,23 @@ class DCF():
         self.x_scale = self.roi_size / (xmax - xmin)
         self.y_scale = self.roi_size / (ymax - xmin)
 
-        # pad_start = time.time()
         # x_pad = int(width * self.search_region_scale)
         # y_pad = int(height * self.search_region_scale)
         # # to HWC
         # features = features.transpose(1, 2, 0)
+        # pad_start = time.time()
         # features = cv2.copyMakeBorder(features, y_pad, y_pad, x_pad, x_pad, cv2.BORDER_REFLECT)
+        # pad_end = time.time()
         # xmin += x_pad
         # xmax += x_pad
         # ymin += y_pad
         # ymax += y_pad
         # # to CHW
         # features = features.transpose(2, 0, 1)
-        # pad_end = time.time()
+        xmin += DCF.feature_pad_xy[0]
+        xmax += DCF.feature_pad_xy[0]
+        ymin += DCF.feature_pad_xy[1]
+        ymax += DCF.feature_pad_xy[1]
 
         box = np.array([[xmin, ymin, xmax, ymax]]).astype(float)
         # box = [int(el) for el in box]
@@ -350,6 +362,7 @@ class DCF():
             # print(xmin, ymin, xmax, ymax)
             # print(features.shape)
             window = features[:, ymin:ymax, xmin:xmax]
+            # print('window shape:', window.shape, [xmin, ymin, xmax, ymax])
             window = window.transpose(1, 2, 0)
             window = cv2.resize(window, (self.roi_size, self.roi_size), interpolation=self.resize_interp_mode)
             window = window.transpose(2, 0, 1)

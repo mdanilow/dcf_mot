@@ -1,8 +1,9 @@
 {
     "tracker_config": {
-        "not_matched_for_lost_th": "[3]"
+        "not_matched_for_lost_th": "[2, 3, 4]"
     },
     "dcf_config": {
-        "lost_psr_th": "list(range(56, 100, 2))"
+        "lost_psr_th": "list(range(5, 51, 5))",
+        "search_region_scale": "[1, 1.2, 1.3]"
     }
 }

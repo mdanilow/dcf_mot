@@ -200,15 +200,39 @@ class DCF():
         self.resize_interp_mode = eval(dcf_config['resize_interp_mode'])
         self.liveness_fn = eval(dcf_config["liveness_fn"])
         self.shift_hanning_window_up = dcf_config["shift_hanning_window_up"]
-        if DCF.G is None:
-            DCF.G = np.fft.fft2(self.get_gauss_response(self.roi_size))
-            DCF.hanning_window = window_func_2d(self.roi_size, self.roi_size, shift_up=self.shift_hanning_window_up)
-
         self.init_filter(features, bbox, debug=debug)
         self.psr = -1
         self.max_response = -1
         # self.selfcorr = np.max(self.compute_response(features, bbox))
+
+    @staticmethod
+    def init_constants(dcf_config):
+        roi_size = dcf_config["roi_size"]
+        DCF.G = np.fft.fft2(DCF.get_gauss_response(roi_size, dcf_config["sigma"]))
+        DCF.hanning_window = window_func_2d(roi_size, roi_size, shift_up=dcf_config["shift_hanning_window_up"])
+
+
+    @staticmethod
+    def get_gauss_response(size, sigma):
+
+        def linear_mapping(img):
+            return (img - img.min()) / (img.max() - img.min())
+       
+        xx, yy = np.meshgrid(np.arange(size), np.arange(size))
+        # get the center of the object...
+        center_x = size // 2
+        center_y = size // 2
+        
+        # cal the distance...
+        dist = (np.square(xx - center_x) + np.square(yy - center_y)) / (2 * sigma)
+        # get the response map...
+        response = np.exp(-dist)
+        # normalize...
+        response = linear_mapping(response)
+
+        return response
     
+
     def init_filter(self, features, bbox, debug=None):
         # start = time.time()
         template = self.crop_search_window(bbox, features, debug=debug)
@@ -222,6 +246,7 @@ class DCF():
         # total = time.time()
         # print('init_filter total:', total - start, "crop:", (crop - start) * 100 / (total - start), "%")
 
+    
     # features in CHW shape
     # bbox in format [x1,y1,x2,y2,score]
     def compute_response(self, features, bbox, debug=None):
@@ -284,24 +309,6 @@ class DCF():
         elif self.update_strategy == "none":
             pass
 
-    def get_gauss_response(self, size):
-
-        def linear_mapping(img):
-            return (img - img.min()) / (img.max() - img.min())
-       
-        xx, yy = np.meshgrid(np.arange(size), np.arange(size))
-        # get the center of the object...
-        center_x = size // 2
-        center_y = size // 2
-        
-        # cal the distance...
-        dist = (np.square(xx - center_x) + np.square(yy - center_y)) / (2 * self.sigma)
-        # get the response map...
-        response = np.exp(-dist)
-        # normalize...
-        response = linear_mapping(response)
-
-        return response
     
     # features in CHW shape
     # bbox in format [x1,y1,x2,y2,score]
@@ -359,10 +366,7 @@ class DCF():
             window = roi_pool(f, b, self.roi_size).numpy()[0]
         elif self.crop_mode == "crop_resize":
             xmin, ymin, xmax, ymax = int(xmin), int(ymin), int(xmax), int(ymax)
-            # print(xmin, ymin, xmax, ymax)
-            # print(features.shape)
             window = features[:, ymin:ymax, xmin:xmax]
-            # print('window shape:', window.shape, [xmin, ymin, xmax, ymax])
             window = window.transpose(1, 2, 0)
             window = cv2.resize(window, (self.roi_size, self.roi_size), interpolation=self.resize_interp_mode)
             window = window.transpose(2, 0, 1)

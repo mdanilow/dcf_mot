@@ -9,7 +9,8 @@
         "init_iou_suppress": 9999,
         "not_matched_for_lost_th": 0,
         "handle_occlusion": false,
-        "biou_buffer_sizes": [0, 0]
+        "biou_buffer_sizes": [0, 0],
+        "cmc_method": "none"
     },
     "dcf_config": {
         "use_conv_features": -1

@@ -13,7 +13,8 @@
         "occ_position_rewind": 5,
         "occ_overlap_thresh": 0.7,
         "occ_time_left_after_occlusion": 10,
-        "biou_buffer_sizes": [0, 0]
+        "biou_buffer_sizes": [0, 0],
+        "cmc_method": "none"
     },
     "dcf_config": {
         "use_conv_features": 0,

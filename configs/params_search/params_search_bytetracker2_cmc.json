@@ -1,0 +1,5 @@
+{
+    "tracker_config": {
+        "init_iou_suppress": "[0.55, 0.45, 0.4]"
+    }
+} 

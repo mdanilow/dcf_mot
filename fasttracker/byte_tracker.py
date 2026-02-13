@@ -298,6 +298,7 @@ class BYTETracker(object):
         STrack.tracker_config = tracker_config
         STrack.img_shape = img_shape
         self.img_shape = img_shape
+        DCF.init_constants(dcf_config)
 
         # general tracking options
         self.frame_count = 0
@@ -384,6 +385,9 @@ class BYTETracker(object):
                 # pad_end = time.time()
                 # to CHW
                 features = features.transpose(2, 0, 1)
+            else:
+                DCF.feature_pad_xy = (0, 0)
+        # print('update start:', features.shape)
 
         if len(dets) > 0:
             '''Detections'''

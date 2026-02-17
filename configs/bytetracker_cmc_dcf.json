@@ -7,7 +7,7 @@
         "match_thresholds": [0.8, 0.5],
         "min_box_area": 100,
         "init_iou_suppress": 9999,
-        "not_matched_for_lost_th": 3,
+        "not_matched_for_lost_th": 2,
         "handle_occlusion": false,
         "biou_buffer_sizes": [0, 0],
         "cmc_method": "sparseOptFlow"
@@ -26,7 +26,7 @@
         "predict_position": false,
         "psr_peak_crop_size": 11,
         "liveness_fn": "compute_apce",
-        "lost_psr_th": 51,
+        "lost_psr_th": 25,
         "use_dcf_gating": false,
         "use_dcf_reid": false,
         "dcf_reid_th": false,

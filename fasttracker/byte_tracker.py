@@ -294,11 +294,11 @@ class BYTETracker(object):
             self.dcf_reid_th = dcf_config["dcf_reid_th"]
             self.dcf_min_h = img_shape[0] * 64 / 1080
             self.dcf_min_w = img_shape[1] * 24 / 1920
+            DCF.init_constants(dcf_config)
         STrack.dcf_config = dcf_config
         STrack.tracker_config = tracker_config
         STrack.img_shape = img_shape
         self.img_shape = img_shape
-        DCF.init_constants(dcf_config)
 
         # general tracking options
         self.frame_count = 0

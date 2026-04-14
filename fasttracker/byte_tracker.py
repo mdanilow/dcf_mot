@@ -13,12 +13,16 @@ from . import matching
 from .basetrack import BaseTrack, TrackState
 from .gmc import GMC
 from box_tracker import DCF
-from utils import clip_coords, scale_coords, scale_f_coords, is_outside_image, is_touching_img_borders, draw_frame_info_byte
-
+from utils import(
+    clip_coords,
+    is_outside_image,
+    draw_frame_info_byte,
+    draw_demo,
+)
 
 class STrack(BaseTrack):
     shared_kalman = KalmanFilter()
-    def __init__(self, tlwh, score, det_idx):
+    def __init__(self, tlwh, score, det_idx, cls=-1):
 
         # wait activate
         self._tlwh = np.asarray(tlwh, dtype=np.float64)
@@ -35,6 +39,7 @@ class STrack(BaseTrack):
         self.last_not_occluded_frame = -1
         self.last_occluded_frame = -1
         self.score = score
+        self.cls = int(cls)
         self.tracklet_len = 0
 
         self.dcf = None
@@ -260,7 +265,15 @@ class STrack(BaseTrack):
         return ret
 
     def __repr__(self):
-        return 'OT_{}_({}-{})'.format(self.track_id, self.start_frame, self.end_frame)
+        return 'OT_{}_({}-{}), det_idx: {} class: {} conf: {} tlbr: {}'.format(
+            self.track_id,
+            self.start_frame,
+            self.end_frame,
+            self.det_idx,
+            self.cls,
+            self.score,
+            self.tlbr
+        )
 
 
 class BYTETracker(object):
@@ -270,7 +283,8 @@ class BYTETracker(object):
                  img_shape=None,
                  debug_vis_scale=1,
                  det_score_division=1,
-                 frame_rate=30):
+                 frame_rate=30,
+                 save_vis_frames=True):
         # print('Tracker config:')
         # print(tracker_config)
         # if dcf_config is not None:
@@ -328,6 +342,7 @@ class BYTETracker(object):
         self.max_time_lost = self.buffer_size
         self.kalman_filter = KalmanFilter()
 
+        self.save_vis_frames = save_vis_frames
         self.debug_vis_scale = debug_vis_scale
         self.debug_history_itstart = []
         self.debug_history_locpred = []
@@ -349,11 +364,15 @@ class BYTETracker(object):
         removed_stracks = []
 
         if output_results.shape[1] == 5:
+        # X, Y, X, Y, CONF
             scores = output_results[:, 4]
             bboxes = output_results[:, :4]
+            classes = -1 * np.ones(output_results.shape[0])
         else:
+        # X, Y, X, Y, CONF, CLS
             output_results = output_results.cpu().numpy()
-            scores = output_results[:, 4] * output_results[:, 5]
+            scores = output_results[:, 4]
+            classes = output_results[:, 5]
             bboxes = output_results[:, :4]  # x1y1x2y2
         # img_h, img_w = img_info[0], img_info[1]
         # scale = min(img_size[0] / float(img_h), img_size[1] / float(img_w))
@@ -367,7 +386,9 @@ class BYTETracker(object):
         dets_second = bboxes[inds_second]
         dets = bboxes[remain_inds]
         scores_keep = scores[remain_inds]
+        classes_keep = classes[remain_inds]
         scores_second = scores[inds_second]
+        classes_second = classes[inds_second]
 
         # pad features for dcf
         if self.use_dcf:
@@ -391,14 +412,14 @@ class BYTETracker(object):
 
         if len(dets) > 0:
             '''Detections'''
-            detections = [STrack(STrack.tlbr_to_tlwh(tlbr), s, det_idx=[idx for idx, x in enumerate(remain_inds) if x][i])
+            detections = [STrack(STrack.tlbr_to_tlwh(tlbr), s, det_idx=[idx for idx, x in enumerate(remain_inds) if x][i], cls=classes_keep[i])
                           for i, (tlbr, s) in enumerate(zip(dets, scores_keep))]
             detections_first = detections.copy()
         else:
             detections = []
         if len(dets_second) > 0:
             '''Detections'''
-            detections_second = [STrack(STrack.tlbr_to_tlwh(tlbr), s, det_idx=[idx for idx, x in enumerate(inds_second) if x][i]) 
+            detections_second = [STrack(STrack.tlbr_to_tlwh(tlbr), s, det_idx=[idx for idx, x in enumerate(inds_second) if x][i], cls=classes_second[i]) 
                                  for i, (tlbr, s) in enumerate(zip(dets_second, scores_second))]
         else:
             detections_second = []
@@ -423,7 +444,8 @@ class BYTETracker(object):
                                             dcf=self.use_dcf)
             # from utils import draw_bboxes
             # draw_bboxes(vis_img, np.array([[0, 0, self.dcf_min_w, self.dcf_min_h]]))
-            self.debug_history_itstart.append(vis_img)  
+            if self.save_vis_frames:
+                self.debug_history_itstart.append(vis_img)  
 
         ''' Step 2: First association, with high score detection boxes'''
         strack_pool = joint_stracks(tracked_stracks, self.lost_stracks)
@@ -647,29 +669,38 @@ class BYTETracker(object):
         # get scores of lost tracks
 
         if debug:
-            det_ids = [15, 6, 14]
-            frame_to_vis_det = {154: 15, 179:6, 191: 14, 249:14}
-            vis_img = draw_frame_info_byte(img=debug_img,
-                                           trackers=self.tracked_stracks,
-                                           lost_trackers=self.lost_stracks,
-                                            # lost_trackers=[],
-                                            # trackers=[t for t in self.tracked_stracks if t.track_id in [2,12, 18]],
-                                            # lost_trackers=[t for t in self.lost_stracks if t.track_id in [2, 12, 18]],
-                                            in_detections=output_results,
-                                            # in_detections=[det for det in (detections_first + detections_second) if det.det_idx == frame_to_vis_det[self.frame_count]] if self.frame_count in frame_to_vis_det else [],
-                                            # in_detections=[],
-                                            frame_number=self.frame_count,
-                                            scale=self.debug_vis_scale,
-                                            dcf=(self.dcf_config is not None),
-                                            det_conf_th=self.det_conf_thresholds[0])
-            # vis_Frames = [154, 179, 191, 199, 209, 219, 226, 239, 249]
-            # if self.frame_count in vis_Frames:
-            #     cv2.imwrite("figures/occ{}.png".format(vis_Frames[self.saved_idx]), vis_img[435:678, 1024:1232, :])
-            #     # print("figures/noocc{}.png".format(vis_Frames[self.saved_idx]), "saved")
-            #     self.saved_idx += 1
+            if self.save_vis_frames:
+                det_ids = [15, 6, 14]
+                frame_to_vis_det = {154: 15, 179:6, 191: 14, 249:14}
+                vis_img = draw_frame_info_byte(img=debug_img,
+                                            trackers=self.tracked_stracks,
+                                            lost_trackers=self.lost_stracks,
+                                                # lost_trackers=[],
+                                                # trackers=[t for t in self.tracked_stracks if t.track_id in [2,12, 18]],
+                                                # lost_trackers=[t for t in self.lost_stracks if t.track_id in [2, 12, 18]],
+                                                in_detections=output_results,
+                                                # in_detections=[det for det in (detections_first + detections_second) if det.det_idx == frame_to_vis_det[self.frame_count]] if self.frame_count in frame_to_vis_det else [],
+                                                # in_detections=[],
+                                                frame_number=self.frame_count,
+                                                scale=self.debug_vis_scale,
+                                                dcf=(self.dcf_config is not None),
+                                                det_conf_th=self.det_conf_thresholds[0])
+                # vis_Frames = [154, 179, 191, 199, 209, 219, 226, 239, 249]
+                # if self.frame_count in vis_Frames:
+                #     cv2.imwrite("figures/occ{}.png".format(vis_Frames[self.saved_idx]), vis_img[435:678, 1024:1232, :])
+                #     # print("figures/noocc{}.png".format(vis_Frames[self.saved_idx]), "saved")
+                #     self.saved_idx += 1
 
-            # if self.frame_count >= 116 and self.frame_count <= 128:
-            self.debug_history_afterupdate.append(vis_img)
+                # if self.frame_count >= 116 and self.frame_count <= 128:
+                self.debug_history_afterupdate.append(vis_img)
+            else:
+                vis_img = draw_demo(
+                    img=debug_img,
+                    trackers=self.tracked_stracks,
+                    lost_trackers=self.lost_stracks,
+                    in_detections=output_results,
+                )
+                self.vis_frame = vis_img
 
         output = []
         for t in self.tracked_stracks:

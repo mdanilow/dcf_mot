@@ -4,6 +4,90 @@ import numpy as np
 import cv2
 
 
+coco_names = [
+    "person",
+    "bicycle",
+    "car",
+    "motorcycle",
+    "airplane",
+    "bus",
+    "train",
+    "truck",
+    "boat",
+    "traffic light",
+    "fire hydrant",
+    "stop sign",
+    "parking meter",
+    "bench",
+    "bird",
+    "cat",
+    "dog",
+    "horse",
+    "sheep",
+    "cow",
+    "elephant",
+    "bear",
+    "zebra",
+    "giraffe",
+    "backpack",
+    "umbrella",
+    "handbag",
+    "tie",
+    "suitcase",
+    "frisbee",
+    "skis",
+    "snowboard",
+    "sports ball",
+    "kite",
+    "baseball bat",
+    "baseball glove",
+    "skateboard",
+    "surfboard",
+    "tennis racket",
+    "bottle",
+    "wine glass",
+    "cup",
+    "fork",
+    "knife",
+    "spoon",
+    "bowl",
+    "banana",
+    "apple",
+    "sandwich",
+    "orange",
+    "broccoli",
+    "carrot",
+    "hot dog",
+    "pizza",
+    "donut",
+    "cake",
+    "chair",
+    "couch",
+    "potted plant",
+    "bed",
+    "dining table",
+    "toilet",
+    "tv",
+    "laptop",
+    "mouse",
+    "remote",
+    "keyboard",
+    "cell phone",
+    "microwave",
+    "oven",
+    "toaster",
+    "sink",
+    "refrigerator",
+    "book",
+    "clock",
+    "vase",
+    "scissors",
+    "teddy bear",
+    "hair drier",
+    "toothbrush",
+]
+
+
 def draw_text_line(img, text, line=0, offset=(10, 20), color=(0, 0, 0), font_scale=0.75):
     x_pos = offset[0]
     y_pos = offset[1] + line * 20
@@ -150,6 +234,74 @@ def draw_frame_info_byte(img, trackers, lost_trackers, in_detections, frame_numb
     draw_bboxes(img, lost_trackers_bboxes, xywh_layout=False, color=(0, 255, 255), label_position="under", info_dict=lost_trackers_info)
     draw_bboxes(img, trackers_bboxes, xywh_layout=False, color=(0, 255, 0), label_position="under", info_dict=trackers_info)
     draw_bboxes(img, detections, color=(0, 0, 255), info_dict=detections_info)
+    return img
+
+
+def draw_demo(img, trackers, lost_trackers, in_detections, scale=1, dcf=False, det_conf_th=0):
+    img = img.copy()
+    trackers_bboxes = np.array([t.tlbr for t in trackers]) if trackers else np.empty(shape=(0,4), dtype=int)
+    lost_trackers_bboxes = np.array([t.tlbr for t in lost_trackers]) if lost_trackers else np.empty(shape=(0,4), dtype=int)
+    detections = in_detections.copy()
+    if type(in_detections) == np.ndarray:
+        if detections.size == 0:
+            detections = np.empty(shape=(0, 5), dtype=int)
+        else:
+            detections = np.array([det for det in detections if det[4] >= det_conf_th])
+    elif type(in_detections) == list:
+        if len(detections) == 0:
+            detections = np.empty(shape=(0, 5), dtype=int)
+        else:
+            detections = np.array([d.tlbr for d in detections if d.score >= det_conf_th])
+    trackers_bboxes = trackers_bboxes.astype(float)
+    lost_trackers_bboxes = lost_trackers_bboxes.astype(float)
+    clip_coords(trackers_bboxes, img.shape)
+    clip_coords(detections, img.shape)
+    clip_coords(lost_trackers_bboxes, img.shape)
+    detections = detections.astype(float)
+    # if not show_conf and detections.size > 0:
+    #     detections = np.array([det[:4] for det in detections])
+    trackers_bboxes[:, :4] *= scale
+    lost_trackers_bboxes[:, :4] *= scale
+    detections[:, :4] *= scale
+
+    if type(in_detections) == np.ndarray:
+        detections_info = {"idx": [idx for idx in list(range(detections.shape[0])) if detections[idx, 4] >= det_conf_th],
+                        "conf": ["{:.2f}".format(d) for d in detections[:, 4] if d >= det_conf_th]}
+    else:
+        detections_info = {"idx": [d.det_idx for d in in_detections if d.score >= det_conf_th],
+                        "conf": ["{:.2f}".format(d.score) for d in in_detections if d.score >= det_conf_th]}
+    trackers_info = {
+                    "class": [coco_names[t.cls] for t in trackers],
+                    "id": [t.track_id for t in trackers],
+                    #  "Ac": [t.is_activated for t in trackers],
+                    #  "Occ": [t.is_occluded for t in trackers]
+                    # "a": [int(t.area) for t in trackers]
+                    # "lno": [track.last_not_occluded_frame for track in trackers]
+                     }
+    lost_trackers_info = {"id": [t.track_id for t in lost_trackers],
+                        # "Ac": [t.is_activated for t in lost_trackers],
+                        #  "Occ": [t.is_occluded for t in lost_trackers],
+                        # "lno": [track.last_not_occluded_frame for track in lost_trackers],
+                        # "lo": [track.last_occluded_frame for track in lost_trackers]
+                        # "a": [int(t.tlwh[2] * t.tlwh[3]) for t in lost_trackers]
+                        }
+    if dcf:
+        dcf_info = {"apce": ["{:.1f}".format(t.dcf.psr) for t in trackers],
+                    # "m_res": ["{:.2f}".format(t.dcf.max_response) for t in trackers]
+                    }
+        lost_dcf_info = {"apce": ["{:.1f}".format(t.dcf.psr) for t in lost_trackers],
+                        # "m_res": ["{:.2f}".format(t.dcf.max_response) for t in lost_trackers]
+                        }
+        trackers_info.update(dcf_info)
+        lost_trackers_info.update(lost_dcf_info)
+    if scale != 1:
+        img = cv2.resize(img, (0, 0), fx=scale, fy=scale)
+    # draw_text_line(img, "Tracks", line=0, color=(255, 0, 0))
+    # draw_text_line(img, "Detections", line=1, color=(0, 0, 255))
+    # draw_text_line(img, "Frame: " + str(frame_number), line=2, color=(0, 255, 0))
+    # draw_bboxes(img, lost_trackers_bboxes, xywh_layout=False, color=(0, 255, 255), label_position="under", info_dict=lost_trackers_info)
+    draw_bboxes(img, trackers_bboxes, xywh_layout=False, color=(0, 255, 0), label_position="under", info_dict=trackers_info)
+    # draw_bboxes(img, detections, color=(0, 0, 255), info_dict=detections_info)
     return img
 
 

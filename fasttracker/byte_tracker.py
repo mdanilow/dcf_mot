@@ -19,10 +19,12 @@ from utils import(
     draw_frame_info_byte,
     draw_demo,
 )
+from fast_reid.fast_reid_interfece import FastReIDInterface
+
 
 class STrack(BaseTrack):
     shared_kalman = KalmanFilter()
-    def __init__(self, tlwh, score, det_idx, cls=-1):
+    def __init__(self, tlwh, score, det_idx, cls=-1, feat=None, feat_history=50):
 
         # wait activate
         self._tlwh = np.asarray(tlwh, dtype=np.float64)
@@ -44,6 +46,23 @@ class STrack(BaseTrack):
 
         self.dcf = None
         self.det_idx = det_idx
+
+        self.smooth_feat = None
+        self.curr_feat = None
+        if feat is not None:
+            self.update_features(feat)
+        self.features = deque([], maxlen=feat_history)
+        self.alpha = 0.9
+
+    def update_features(self, feat):
+        feat /= np.linalg.norm(feat)
+        self.curr_feat = feat
+        if self.smooth_feat is None:
+            self.smooth_feat = feat
+        else:
+            self.smooth_feat = self.alpha * self.smooth_feat + (1 - self.alpha) * feat
+        self.features.append(feat)
+        self.smooth_feat /= np.linalg.norm(self.smooth_feat)
 
     def predict(self):
         mean_state = self.mean.copy()
@@ -136,6 +155,9 @@ class STrack(BaseTrack):
             self.track_id = self.next_id()
         self.score = new_track.score
 
+        if new_track.curr_feat is not None:
+            self.update_features(new_track.curr_feat)
+
         if STrack.dcf_config is not None:
             self.dcf_updated_at_frame = frame_id
             self.dcf.update_filter(
@@ -166,6 +188,9 @@ class STrack(BaseTrack):
         self.is_activated = True
 
         self.score = new_track.score
+
+        if new_track.curr_feat is not None:
+            self.update_features(new_track.curr_feat)
 
         if STrack.dcf_config is not None:
             self.dcf_updated_at_frame = frame_id
@@ -325,6 +350,8 @@ class BYTETracker(object):
         self.init_iou_suppress = tracker_config["init_iou_suppress"]
         self.not_matched_for_lost_th = tracker_config["not_matched_for_lost_th"]
         self.biou_buffer_sizes = tracker_config["biou_buffer_sizes"]
+
+        # cmc
         self.cmc_method = tracker_config["cmc_method"]
         self.use_cmc = self.cmc_method != "none"
         if self.use_cmc:
@@ -338,6 +365,13 @@ class BYTETracker(object):
             self.occ_overlap_thresh = tracker_config["occ_overlap_thresh"]
             self.occ_time_left_after_occlusion = tracker_config["occ_time_left_after_occlusion"]
 
+        # reid
+        self.use_reid = tracker_config.get("use_reid")
+        if self.use_reid:
+            self.encoder = FastReIDInterface(tracker_config["reid_config"], tracker_config["reid_weights"], device="cuda")
+            self.proximity_thresh = 0.5
+            self.appearance_thresh = 0.25
+
         self.buffer_size = int(frame_rate / 30.0 * tracker_config["track_buffer"])
         self.max_time_lost = self.buffer_size
         self.kalman_filter = KalmanFilter()
@@ -347,7 +381,8 @@ class BYTETracker(object):
         self.debug_history_itstart = []
         self.debug_history_locpred = []
         self.debug_history_afterupdate = []
-        self.debug_modes = ["dcf_predict"]
+        self.debug_modes = []
+        # self.debug_modes = ["frame_count", "dcf_predict"]
         # self.debug_modes = ["dcf_update_det"]
         # self.debug_modes = ["dcf_gating"]
 
@@ -408,21 +443,24 @@ class BYTETracker(object):
                 features = features.transpose(2, 0, 1)
             else:
                 DCF.feature_pad_xy = (0, 0)
-        # print('update start:', features.shape)
+        
+        # ReID
+        if self.use_reid:
+            features_first = self.encoder.inference(debug_img, dets)
+        else:
+            features_first = [None for _ in dets]
 
+        detections = []
+        detections_second = []
         if len(dets) > 0:
             '''Detections'''
-            detections = [STrack(STrack.tlbr_to_tlwh(tlbr), s, det_idx=[idx for idx, x in enumerate(remain_inds) if x][i], cls=classes_keep[i])
-                          for i, (tlbr, s) in enumerate(zip(dets, scores_keep))]
+            detections = [STrack(STrack.tlbr_to_tlwh(tlbr), s, det_idx=[idx for idx, x in enumerate(remain_inds) if x][i], cls=classes_keep[i], feat=f)
+                          for i, (tlbr, s, f) in enumerate(zip(dets, scores_keep, features_first))]
             detections_first = detections.copy()
-        else:
-            detections = []
         if len(dets_second) > 0:
             '''Detections'''
             detections_second = [STrack(STrack.tlbr_to_tlwh(tlbr), s, det_idx=[idx for idx, x in enumerate(inds_second) if x][i], cls=classes_second[i]) 
                                  for i, (tlbr, s) in enumerate(zip(dets_second, scores_second))]
-        else:
-            detections_second = []
 
         ''' Add newly detected tracklets to tracked_stracks'''
         unconfirmed = []
@@ -434,7 +472,8 @@ class BYTETracker(object):
                 tracked_stracks.append(track)
 
         if debug:
-            print('frame:', self.frame_count)
+            if "frame_count" in self.debug_modes:
+                print('frame:', self.frame_count)
 
             vis_img = draw_frame_info_byte(img=debug_img,
                                             trackers=self.tracked_stracks,
@@ -449,27 +488,6 @@ class BYTETracker(object):
 
         ''' Step 2: First association, with high score detection boxes'''
         strack_pool = joint_stracks(tracked_stracks, self.lost_stracks)
-
-        # # EXPERIMENTS
-        # if self.use_dcf:
-        #     for track in strack_pool:
-        #         if track.state == TrackState.Removed:
-        #             print('dupa')
-        #         area = track.clipped_area
-        #         tlwh = track.clipped_tlwh
-        #         if tlwh[2] > self.dcf_min_w and tlwh[3] > self.dcf_min_h:
-        #             # self.histogram_areas.append(track.area)
-        #             # print(track.tlbr)
-        #             track.dcf_predict(features,
-        #                             debug="predict, trkid{}".format(track.track_id) if 
-        #                                 (debug is not None and "dcf_predict" in self.debug_modes)
-        #                                 else None
-        #             )
-        #             if area in self.areas_to_psr:
-        #                 self.areas_to_psr[area].append(track.dcf.psr)
-        #             else:
-        #                 self.areas_to_psr[area] = [track.dcf.psr]
-        #             self.dcf_histogram_data.append(track.dcf.psr)
         
         # Predict the current location with KF
         STrack.multi_predict(strack_pool)
@@ -480,9 +498,26 @@ class BYTETracker(object):
             STrack.multi_gmc(strack_pool, warp)
             STrack.multi_gmc(unconfirmed, warp)
 
-        dists = matching.iou_distance(strack_pool, detections, biou=self.biou_buffer_sizes[0])
-        # if not self.args.mot20:
-        dists = matching.fuse_score(dists, detections)
+        ious_dists = matching.iou_distance(strack_pool, detections, biou=self.biou_buffer_sizes[0])
+        ious_dists = matching.fuse_score(ious_dists, detections)
+        if self.use_reid:
+            ious_dists_mask = (ious_dists > self.proximity_thresh)
+            emb_dists = matching.embedding_distance(strack_pool, detections) / 2.0
+            emb_dists[emb_dists > self.appearance_thresh] = 1.0
+            emb_dists[ious_dists_mask] = 1.0
+            dists = np.minimum(ious_dists, emb_dists)
+
+            # Popular ReID method (JDE / FairMOT)
+            # raw_emb_dists = matching.embedding_distance(strack_pool, detections)
+            # dists = matching.fuse_motion(self.kalman_filter, raw_emb_dists, strack_pool, detections)
+            # emb_dists = dists
+
+            # IoU making ReID
+            # dists = matching.embedding_distance(strack_pool, detections)
+            # dists[ious_dists_mask] = 1.0
+        else:
+            dists = ious_dists
+
         matches, u_track, u_detection = matching.linear_assignment(dists, thresh=self.match_thresholds[0])
 
         for itracked, idet in matches:
@@ -602,9 +637,17 @@ class BYTETracker(object):
 
         '''Deal with unconfirmed tracks, usually tracks with only one beginning frame'''
         detections = [detections[i] for i in u_detection]
-        dists = matching.iou_distance(unconfirmed, detections)
-        # if not self.args.mot20:
-        dists = matching.fuse_score(dists, detections)
+        ious_dists = matching.iou_distance(unconfirmed, detections)
+        ious_dists = matching.fuse_score(ious_dists, detections)
+        if self.use_reid:
+            emb_dists = matching.embedding_distance(unconfirmed, detections) / 2.0
+            emb_dists[emb_dists > self.appearance_thresh] = 1.0
+            ious_dists_mask = (ious_dists > self.proximity_thresh)
+            emb_dists[ious_dists_mask] = 1.0
+            dists = np.minimum(ious_dists, emb_dists)
+        else:
+            dists = ious_dists
+
         matches, u_unconfirmed, u_detection = matching.linear_assignment(dists, thresh=0.7)
         for itracked, idet in matches:
             unconfirmed[itracked].update(detections[idet],

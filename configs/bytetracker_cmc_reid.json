@@ -1,0 +1,21 @@
+{
+    "meta_tracker": "BYTETracker",
+    "tracker_config": {
+        "det_conf_thresholds": [0.1, 0.6],
+        "new_det_conf_th": 0.7,
+        "track_buffer": 30,
+        "match_thresholds": [0.8, 0.5],
+        "min_box_area": 100,
+        "init_iou_suppress": 9999,
+        "not_matched_for_lost_th": 0,
+        "handle_occlusion": false,
+        "biou_buffer_sizes": [0, 0],
+        "cmc_method": "sparseOptFlow",
+        "use_reid": true,
+        "reid_config": "fast_reid/configs/MOT17/sbs_S50.yml",
+        "reid_weights": "pretrained/mot17_sbs_S50.pth"
+    },
+    "dcf_config": {
+        "use_conv_features": -1
+    }
+}

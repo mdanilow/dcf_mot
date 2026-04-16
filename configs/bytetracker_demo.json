@@ -10,7 +10,10 @@
         "not_matched_for_lost_th": 0,
         "handle_occlusion": false,
         "biou_buffer_sizes": [0, 0],
-        "cmc_method": "sparseOptFlow"
+        "cmc_method": "sparseOptFlow",
+        "use_reid": true,
+        "reid_config": "fast_reid/configs/MOT17/sbs_S50.yml",
+        "reid_weights": "pretrained/mot17_sbs_S50.pth"
     },
     "dcf_config": {
         "use_conv_features": -1

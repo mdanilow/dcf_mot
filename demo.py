@@ -1,4 +1,5 @@
 import argparse
+import time
 
 import cv2
 import matplotlib.pyplot as plt
@@ -13,7 +14,7 @@ def parse_args():
     """Parse input arguments."""
     parser = argparse.ArgumentParser(description='SORT demo')
     parser.add_argument("--detector", help="Ultralytics model name", type=str, default='yolov8l.pt')
-    parser.add_argument("--config", help="Path to config file", type=str, default='configs/bytetracker.json')
+    parser.add_argument("--config", help="Path to config file", type=str, default='configs/bytetracker_demo.json')
     parser.add_argument("--output_dir", help="Path to the output dir", type=str, default="output/demo")
     parser.add_argument("--debug", action='store_true')
     parser.add_argument("--debug_vis_scale", help="Scale the image for visualization (applicable if --debug)", type=float, default=1)
@@ -47,11 +48,13 @@ if __name__ == "__main__":
         key = cv2.waitKey(1)
         if key == ord("q"):
             break
+        
+        start_time = time.time()
 
         # detect
         ret, img = camera.read()
         img_rgb = np.ascontiguousarray(img)
-        detections = detector(img_rgb)
+        detections = detector(img_rgb, verbose=False)
         # detections = detector("bus.jpg")
         img_det = detections[0].plot()
 
@@ -61,6 +64,10 @@ if __name__ == "__main__":
             debug_img=img_rgb,
             debug=True
         )
+
+        total_time = time.time() - start_time
+        fps = 1 / total_time
+        print('fps:', fps)
 
         # print(detections[0].boxes)
         # print(detections[0].boxes.data.cpu().numpy())

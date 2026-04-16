@@ -154,6 +154,7 @@ class STrack(BaseTrack):
         if new_id:
             self.track_id = self.next_id()
         self.score = new_track.score
+        self.cls = new_track.cls
 
         if new_track.curr_feat is not None:
             self.update_features(new_track.curr_feat)
@@ -188,6 +189,7 @@ class STrack(BaseTrack):
         self.is_activated = True
 
         self.score = new_track.score
+        self.cls = new_track.cls
 
         if new_track.curr_feat is not None:
             self.update_features(new_track.curr_feat)
@@ -691,10 +693,10 @@ class BYTETracker(object):
 
         """ Step 5: Update state"""
         for track in self.lost_stracks:
-            if is_outside_image(self.img_shape, track.tlbr):
-                track.mark_removed()
-                removed_stracks.append(track)
-                continue
+            # if is_outside_image(self.img_shape, track.tlbr):
+            #     track.mark_removed()
+            #     removed_stracks.append(track)
+            #     continue
             if self.frame_count - track.end_frame > self.max_time_lost + track.occluded_len:
                 track.mark_removed()
                 removed_stracks.append(track)

@@ -67,6 +67,7 @@ if __name__ == "__main__":
 
         total_time = time.time() - start_time
         fps = 1 / total_time
+        print()
         print('fps:', fps)
 
         # print(detections[0].boxes)

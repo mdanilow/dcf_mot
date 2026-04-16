@@ -101,7 +101,9 @@ def draw_text_line(img, text, line=0, offset=(10, 20), color=(0, 0, 0), font_sca
                       cv2.LINE_AA)
 
 
-def draw_bboxes(img, dets, color=(0, 0, 255), xywh_layout=False, id_to_color=None, id_to_trajectory=None, label_position='over', info_dict={}):
+def draw_bboxes(img, dets, color=(0, 0, 255), xywh_layout=False, id_to_color=None, id_to_trajectory=None,
+                label_position='over', info_dict={}, tight_info=False, 
+                bbox_thickness=1):
     # gt = dets.shape[-1] == 9
     # color = (0, 0, 255) if gt else (0, 255, 0)
     dets = copy(dets)
@@ -123,20 +125,38 @@ def draw_bboxes(img, dets, color=(0, 0, 255), xywh_layout=False, id_to_color=Non
             for point in id_to_trajectory[obj_id]:
                 img = cv2.circle(img, point, radius=1, color=id_to_color[obj_id], thickness=2)
         
-        img = cv2.rectangle(img, (xywh[0], xywh[1]), (xywh[0]+xywh[2], xywh[1]+xywh[3]), id_to_color[obj_id] if id_to_color else color, 1)
-        font_scale = 0.5
+        img = cv2.rectangle(img, (xywh[0], xywh[1]), (xywh[0]+xywh[2], xywh[1]+xywh[3]), id_to_color[obj_id] if id_to_color else color, bbox_thickness)
+        font_scale = 0.6
         line_thickness = 1
         line_height = 17
         y_pos = xywh[1] - line_height * len(info_dict.keys()) if label_position == "over" else xywh[1] + 14
-        for i, (key, values) in enumerate(info_dict.items()):
-            text = key + ": {}".format(values[idx])
-            img = cv2.putText(img, text,
-                            (xywh[0] + 3, y_pos + line_height * i),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            font_scale,
-                            color,
-                            line_thickness,
-                            cv2.LINE_AA)
+        
+        if tight_info:
+            info = ""
+            for i, (key, values) in enumerate(info_dict.items()):
+                info += str(values[idx]) + " "
+            info = info.rstrip(" ")
+            (info_width, info_height), baseline = cv2.getTextSize(info, cv2.FONT_HERSHEY_SIMPLEX, font_scale, line_thickness)
+            img = cv2.rectangle(img, (xywh[0], xywh[1]), (xywh[0] + info_width + 3, xywh[1] + info_height + baseline), color, -1)
+            cv2.putText(
+                img,
+                info,
+                (xywh[0] + 3, xywh[1] + info_height ),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                font_scale,
+                (255, 255, 255),
+                line_thickness,
+                cv2.LINE_AA)
+        else:
+            for i, (key, values) in enumerate(info_dict.items()):
+                text = key + ": {}".format(values[idx])
+                img = cv2.putText(img, text,
+                                (xywh[0] + 3, y_pos + line_height * i),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                font_scale,
+                                color,
+                                line_thickness,
+                                cv2.LINE_AA)
         
 
 def draw_frame_info(img, trackers, detections, frame_number, scale=2, dcf=False):
@@ -300,7 +320,7 @@ def draw_demo(img, trackers, lost_trackers, in_detections, scale=1, dcf=False, d
     # draw_text_line(img, "Detections", line=1, color=(0, 0, 255))
     # draw_text_line(img, "Frame: " + str(frame_number), line=2, color=(0, 255, 0))
     # draw_bboxes(img, lost_trackers_bboxes, xywh_layout=False, color=(0, 255, 255), label_position="under", info_dict=lost_trackers_info)
-    draw_bboxes(img, trackers_bboxes, xywh_layout=False, color=(0, 255, 0), label_position="under", info_dict=trackers_info)
+    draw_bboxes(img, trackers_bboxes, xywh_layout=False, color=(0, 0, 255), label_position="under", info_dict=trackers_info, bbox_thickness=2, tight_info=True)
     # draw_bboxes(img, detections, color=(0, 0, 255), info_dict=detections_info)
     return img
 

@@ -505,8 +505,10 @@ class BYTETracker(object):
         if self.use_reid:
             ious_dists_mask = (ious_dists > self.proximity_thresh)
             emb_dists = matching.embedding_distance(strack_pool, detections) / 2.0
+            print("First ass, embedding matrix:")
+            matching.print_cost_matrix(strack_pool, detections, emb_dists)
             emb_dists[emb_dists > self.appearance_thresh] = 1.0
-            emb_dists[ious_dists_mask] = 1.0
+            # emb_dists[ious_dists_mask] = 1.0
             dists = np.minimum(ious_dists, emb_dists)
 
             # Popular ReID method (JDE / FairMOT)
@@ -643,9 +645,11 @@ class BYTETracker(object):
         ious_dists = matching.fuse_score(ious_dists, detections)
         if self.use_reid:
             emb_dists = matching.embedding_distance(unconfirmed, detections) / 2.0
+            print("unconfirmed ass, embedding matrix:")
+            matching.print_cost_matrix(unconfirmed, detections, emb_dists)
             emb_dists[emb_dists > self.appearance_thresh] = 1.0
             ious_dists_mask = (ious_dists > self.proximity_thresh)
-            emb_dists[ious_dists_mask] = 1.0
+            # emb_dists[ious_dists_mask] = 1.0
             dists = np.minimum(ious_dists, emb_dists)
         else:
             dists = ious_dists
